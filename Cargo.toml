@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 arctic = "1.0.0"
+chrono = "0.4.37"
 gtk4 = "0.8.1"
 tokio = "1.19.2"
 

@@ -1635,6 +1635,7 @@ name = "zen-signal"
 version = "0.1.0"
 dependencies = [
  "arctic",
+ "chrono",
  "gtk4",
  "plotters",
  "plotters-cairo",
