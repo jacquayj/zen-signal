@@ -1,3 +1,55 @@
+use std::sync::mpsc;
+use arctic::PmdData;
+use crate::SensorUpdate;
+
+pub struct Channels {
+    pub ecg: TimeSeries,
+    pub acc: TimeSeries,
+    pub hr: TimeSeries,
+}
+
+impl Channels {
+    pub fn new() -> Self {
+        Self {
+            ecg: TimeSeries::new(),
+            acc: TimeSeries::new(),
+            hr: TimeSeries::new(),
+        }
+    }
+
+    pub fn handle_received_data(&mut self, receiver: &mpsc::Receiver<SensorUpdate>) -> bool {
+        match receiver.try_recv() {
+            Ok(sensor_update) => match sensor_update {
+                SensorUpdate::HeartRate(hr) => {
+                    self.hr.add_point(self.hr.data.len().try_into().unwrap(), (*hr.bpm()).into()); 
+
+                    true
+                }
+                SensorUpdate::MeasurementData(data) => {
+                    let timestamp = data.time_stamp();
+
+                    for (inx, d) in data.data().iter().enumerate() {
+                        match d {
+                            PmdData::Acc(_acc) => {}
+                            PmdData::Ecg(ecg) => {
+                                // Magic number
+                                let timestep = 1000000000 / 130;
+
+                                self.ecg.add_point(timestamp + (inx * timestep) as u64, *ecg.val());
+                            }
+                        }
+                    }
+
+                 true
+                }
+            },
+            Err(_) => {
+                false
+            }
+        }
+    }
+}
+
 pub struct Point {
     pub time: u64,
     pub value: i32,
@@ -41,4 +93,5 @@ impl TimeSeries {
     pub fn last_points(&self, n: usize) -> &[Point] {
         &self.data[self.data.len().saturating_sub(n)..]
     }
+
 }

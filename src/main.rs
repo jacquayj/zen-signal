@@ -8,7 +8,7 @@ use gtk::{prelude::*, DrawingArea};
 use gtk4 as gtk;
 use plotters::chart::ChartBuilder;
 use plotters::drawing::IntoDrawingArea;
-use plotters::series::LineSeries; // Import the LineSeries module
+use plotters::series::LineSeries;
 use plotters::style::{RED, WHITE};
 use plotters_cairo::CairoBackend;
 use std::cell::RefCell;
@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
 use tokio::runtime::Runtime;
 
-use timeseries::{PointSliceExt, TimeSeries};
+use timeseries::{Channels, PointSliceExt, TimeSeries};
 
 // enable clone and debug for the SensorUpdate enum
 #[derive(Debug)]
@@ -51,7 +51,7 @@ impl arctic::EventHandler for Handler {
     }
 }
 
-async fn collect_data(sender: Sender<SensorUpdate>) {
+async fn start_data_collection(sender: Sender<SensorUpdate>) {
     let mut polar = arctic::PolarSensor::new("56853526".to_string())
         .await
         .expect("Invalid ID");
@@ -100,79 +100,85 @@ fn main() -> glib::ExitCode {
             .default_height(600)
             .build();
 
-        // Create a channel for communication between async runtime and GTK main loop
+        // Create a channel for communication between the data collection thread and the UI thread
         let (sender, receiver) = mpsc::channel::<SensorUpdate>();
         std::thread::spawn(move || {
             // Create a new async runtime so we can run async functions in a blocking context
             let rt = Runtime::new().unwrap();
             rt.block_on(async move {
-                collect_data(sender).await;
+                start_data_collection(sender).await;
             });
         });
 
-        let ecg_series: Rc<RefCell<TimeSeries>> = Rc::new(RefCell::new(TimeSeries::new()));
+        let channels = Rc::new(RefCell::new(Channels::new()));
 
         let drawing_area = DrawingArea::new();
         window.set_child(Some(&drawing_area));
 
         let da = Rc::new(drawing_area);
 
-        let ecg_series_clone = ecg_series.clone();
+        let channels_clone = channels.clone();
         da.set_draw_func(move |_, cr: &Context, width: i32, height: i32| {
             let backend = CairoBackend::new(cr, (width as u32, height as u32)).unwrap();
             let root = backend.into_drawing_area();
             root.fill(&WHITE).unwrap();
 
-            let ecg_series = ecg_series_clone.borrow();
-            let last_points = ecg_series.last_points(400);
+            // First, split the drawing area into two parts, with the first part taking up two-thirds of the area
+            let (upper_two_thirds, lower_one_third) =
+                root.split_vertically((height as u32 * 2) / 3);
 
-            let (min_time, max_time) = last_points.min_max_time().unwrap_or((0, 0));
-            let (min_ecg, max_ecg) = last_points.min_max_value().unwrap_or((0, 0));
+            // Then, split the upper_two_thirds area into two to get three equally sized areas
+            let (upper, middle) = upper_two_thirds.split_vertically(height as u32 / 3);
 
-            let mut chart = ChartBuilder::on(&root)
-                .margin(5)
-                .x_label_area_size(30)
-                .y_label_area_size(30)
-                .build_cartesian_2d(min_time..max_time, min_ecg..max_ecg)
-                .unwrap();
+            // Draw the ECG signal
+            {
+                let ecg_series = &channels_clone.borrow().ecg;
+                let last_points = ecg_series.last_points(400);
+                let (min_time, max_time) = last_points.min_max_time().unwrap_or((0, 0));
+                let (min_ecg, max_ecg) = last_points.min_max_value().unwrap_or((0, 0));
+                let mut chart = ChartBuilder::on(&upper)
+                    .margin(5)
+                    .x_label_area_size(30)
+                    .y_label_area_size(30)
+                    .build_cartesian_2d(min_time..max_time, min_ecg..max_ecg)
+                    .unwrap();
+                chart.configure_mesh().draw().unwrap();
+                chart
+                    .draw_series(LineSeries::new(
+                        last_points.iter().map(|point| (point.time, point.value)),
+                        &RED,
+                    ))
+                    .unwrap();
+            }
 
-            chart.configure_mesh().draw().unwrap();
-
-            chart
-                .draw_series(LineSeries::new(
-                    last_points.iter().map(|point| (point.time, point.value)),
-                    &RED,
-                ))
-                .unwrap();
+            // Draw the HR signal
+            {
+                let hr_series = &channels_clone.borrow().hr;
+                let last_points = hr_series.last_points(400);
+                let (min_time, max_time) = last_points.min_max_time().unwrap_or((0, 0));
+                let mut chart = ChartBuilder::on(&middle)
+                    .margin(5)
+                    //.x_label_area_size(30)
+                    .y_label_area_size(30)
+                    .build_cartesian_2d(min_time..max_time, 20..120)
+                    .unwrap();
+                chart.configure_mesh().draw().unwrap();
+                chart
+                    .draw_series(LineSeries::new(
+                        last_points.iter().map(|point| (point.time, point.value)),
+                        &RED,
+                    ))
+                    .unwrap();
+            }
 
             root.present().expect("Unable to draw");
         });
 
         // When idle, add data to be plotted from data collection thread
         glib::source::idle_add_local(move || {
-            if let Ok(sensor_update) = receiver.try_recv() {
-                match sensor_update {
-                    SensorUpdate::HeartRate(_hr) => {}
-                    SensorUpdate::MeasurementData(data) => {
-                        let timestamp = data.time_stamp();
-
-                        for (inx, d) in data.data().iter().enumerate() {
-                            match d {
-                                arctic::PmdData::Acc(_acc) => {}
-                                arctic::PmdData::Ecg(ecg) => {
-                                    // Magic number
-                                    let timestep = 1000000000 / 130;
-
-                                    ecg_series
-                                        .borrow_mut()
-                                        .add_point(timestamp + (inx * timestep) as u64, *ecg.val());
-                                }
-                            }
-                        }
-                    }
-                }
-
-                da.queue_draw();
+            match channels.borrow_mut().handle_received_data(&receiver) {
+                true => da.queue_draw(),
+                false => {}
             }
 
             ControlFlow::Continue
