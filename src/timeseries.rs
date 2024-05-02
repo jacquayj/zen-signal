@@ -1,19 +1,25 @@
-use std::sync::mpsc;
-use arctic::PmdData;
 use crate::SensorUpdate;
+use arctic::PmdData;
+use std::sync::mpsc;
 
 pub struct Channels {
     pub ecg: TimeSeries,
-    pub acc: TimeSeries,
+    pub acc_x: TimeSeries,
+    pub acc_y: TimeSeries,
+    pub acc_z: TimeSeries,
     pub hr: TimeSeries,
+    pub rr: TimeSeries,
 }
 
 impl Channels {
     pub fn new() -> Self {
         Self {
             ecg: TimeSeries::new(),
-            acc: TimeSeries::new(),
+            acc_x: TimeSeries::new(),
+            acc_y: TimeSeries::new(),
+            acc_z: TimeSeries::new(),
             hr: TimeSeries::new(),
+            rr: TimeSeries::new(),
         }
     }
 
@@ -21,7 +27,27 @@ impl Channels {
         match receiver.try_recv() {
             Ok(sensor_update) => match sensor_update {
                 SensorUpdate::HeartRate(hr) => {
-                    self.hr.add_point(self.hr.data.len().try_into().unwrap(), (*hr.bpm()).into()); 
+                    self.hr
+                        .add_point(self.hr.data.len().try_into().unwrap(), (*hr.bpm()).into());
+
+                    println!("Heart rate: {:?}", hr);
+
+                    let rr = hr.rr().clone().unwrap_or(vec![]);
+
+                    let rr_len = rr.len();
+
+                    // handle zero length
+                    if rr_len == 0 {
+                        self.rr.add_point(
+                            self.rr.data.len().try_into().unwrap(),
+                            self.rr.data.last().unwrap().value,
+                        );
+                    } else {
+                        let rr_average =
+                            (rr.iter().sum::<u16>() as f64 / rr_len as f64).ceil() as i32;
+                        self.rr
+                            .add_point(self.rr.data.len().try_into().unwrap(), rr_average);
+                    }
 
                     true
                 }
@@ -30,22 +56,31 @@ impl Channels {
 
                     for (inx, d) in data.data().iter().enumerate() {
                         match d {
-                            PmdData::Acc(_acc) => {}
+                            PmdData::Acc(acc) => {
+                                // Magic number
+                                // I just increased the timestep until the graph looked good
+                                let acc_timestep = 1000000000 / 200;
+
+                                let t = timestamp + (inx * acc_timestep) as u64;
+                                let acc = acc.data();
+
+                                self.acc_x.add_point(t, acc.0);
+                                self.acc_y.add_point(t, acc.1);
+                                self.acc_z.add_point(t, acc.2);
+                            }
                             PmdData::Ecg(ecg) => {
                                 // Magic number
-                                let timestep = 1000000000 / 130;
-
-                                self.ecg.add_point(timestamp + (inx * timestep) as u64, *ecg.val());
+                                let ecg_timestep = 1000000000 / 130;
+                                self.ecg
+                                    .add_point(timestamp + (inx * ecg_timestep) as u64, *ecg.val());
                             }
                         }
                     }
 
-                 true
+                    true
                 }
             },
-            Err(_) => {
-                false
-            }
+            Err(_) => false,
         }
     }
 }
@@ -62,6 +97,7 @@ pub struct TimeSeries {
 pub trait PointSliceExt {
     fn min_max_time(&self) -> Option<(u64, u64)>;
     fn min_max_value(&self) -> Option<(i32, i32)>;
+    fn rmssd(&self) -> f64;
 }
 
 // Implement the trait for a slice of `Point`
@@ -79,6 +115,18 @@ impl PointSliceExt for &[Point] {
             Some((min, max)) => Some((min.min(point.value), max.max(point.value))),
         })
     }
+
+    // RMSSD
+    fn rmssd(&self) -> f64 {
+        let mut sum = 0.0;
+        let mut count = 0;
+        for window in self.windows(2) {
+            let diff = window[1].value as f64 - window[0].value as f64;
+            sum += diff * diff;
+            count += 1;
+        }
+        (sum / count as f64).sqrt()
+    }
 }
 
 impl TimeSeries {
@@ -93,5 +141,4 @@ impl TimeSeries {
     pub fn last_points(&self, n: usize) -> &[Point] {
         &self.data[self.data.len().saturating_sub(n)..]
     }
-
 }
