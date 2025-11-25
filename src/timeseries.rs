@@ -143,38 +143,69 @@ impl Channels {
             .unwrap()
             .as_nanos() as u64;
         
-        // Use actual arrival time for timestamping
-        let batch_ref_time = now;
-        
         let data_vec = data.data();
-        let batch_size = data_vec.len() as u64;
+        
+        // Count samples by type to properly timestamp each channel
+        let mut ecg_count = 0u64;
+        let mut acc_count = 0u64;
+        for d in data_vec.iter() {
+            match d {
+                PmdData::Ecg(_) => ecg_count += 1,
+                PmdData::Acc(_) => acc_count += 1,
+            }
+        }
+        
+        // Determine the starting timestamp for each data type
+        // Use the last timestamp + 1 sample interval, or fall back to calculating from 'now'
+        let ecg_timestep = NANOS_PER_SECOND / self.ecg.sample_rate();
+        let acc_timestep = NANOS_PER_SECOND / self.acc_x.sample_rate();
+        
+        let ecg_start_time = if let Some(last_point) = self.ecg.data.last() {
+            // Continue from last timestamp + one interval
+            last_point.time + ecg_timestep
+        } else if ecg_count > 0 {
+            // First batch: spread backwards from now
+            now.saturating_sub((ecg_count - 1) * ecg_timestep)
+        } else {
+            // No ECG samples in this batch
+            now
+        };
+        
+        let acc_start_time = if let Some(last_point) = self.acc_x.data.last() {
+            // Continue from last timestamp + one interval
+            last_point.time + acc_timestep
+        } else if acc_count > 0 {
+            // First batch: spread backwards from now
+            now.saturating_sub((acc_count - 1) * acc_timestep)
+        } else {
+            // No ACC samples in this batch
+            now
+        };
+        
+        // Track indices per data type
+        let mut ecg_idx = 0u64;
+        let mut acc_idx = 0u64;
 
-        for (idx, d) in data_vec.iter().enumerate() {
+        for d in data_vec.iter() {
             match d {
                 PmdData::Acc(acc) => {
-                    // Calculate time delta between samples based on configured sample rate
-                    let acc_timestep = NANOS_PER_SECOND / self.acc_x.sample_rate();
-                    
-                    // Calculate timestamp for this sample within the batch
-                    // Working backwards from batch_ref_time to spread samples across time
-                    let samples_from_end = batch_size - 1 - idx as u64;
-                    let t = batch_ref_time.saturating_sub(samples_from_end * acc_timestep);
+                    // Calculate timestamp as start_time + (index * timestep)
+                    let t = acc_start_time + (acc_idx * acc_timestep);
 
                     let acc = acc.data();
                     self.acc_x.add_point(t, acc.0);
                     self.acc_y.add_point(t, acc.1);
                     self.acc_z.add_point(t, acc.2);
+                    
+                    acc_idx += 1;
                 }
                 PmdData::Ecg(ecg) => {
-                    // Calculate time delta between samples based on configured sample rate
-                    let ecg_timestep = NANOS_PER_SECOND / self.ecg.sample_rate();
-                    
-                    // Calculate timestamp for this sample within the batch
-                    // Working backwards from batch_ref_time to spread samples across time
-                    let samples_from_end = batch_size - 1 - idx as u64;
-                    let t = batch_ref_time.saturating_sub(samples_from_end * ecg_timestep);
+                    // Calculate timestamp as start_time + (index * timestep)
+                    let t = ecg_start_time + (ecg_idx * ecg_timestep);
                     
                     self.ecg.add_point(t, *ecg.val());
+                    
+                    ecg_idx += 1;
                 }
             }
         }
