@@ -295,9 +295,6 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           
-          # Get the commit SHA for this tag
-          COMMIT_SHA="${{ github.sha }}"
-          
           # Create release notes
           cat > release-notes.md << 'EOF'
           ## ZenSignal ${{ steps.get_version.outputs.VERSION }}
@@ -354,9 +351,8 @@ jobs:
           See `checksums.txt` for SHA256 hashes of all binaries.
           EOF
           
-          # Create the release with target commit
+          # Create the release
           gh release create "$VERSION" \
             --title "Release $VERSION" \
             --notes-file release-notes.md \
-            --target "$COMMIT_SHA" \
             release-files/*
