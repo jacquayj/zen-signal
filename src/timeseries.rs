@@ -9,6 +9,23 @@ const ACC_SAMPLE_RATE_HZ: u64 = 200; // Default accelerometer sampling rate in H
 // Nanoseconds in one second
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
+/// Time conversion constants
+#[derive(Debug, Clone, Copy)]
+pub enum TimeUnit {
+    Nanoseconds,
+    Seconds,
+}
+
+impl TimeUnit {
+    /// Get the conversion factor from nanoseconds
+    pub const fn nanos_per_unit(&self) -> f64 {
+        match self {
+            TimeUnit::Nanoseconds => 1.0,
+            TimeUnit::Seconds => 1_000_000_000.0,
+        }
+    }
+}
+
 /// Time window duration for chart display
 #[derive(Debug, Clone, Copy)]
 pub enum ChartWindow {
