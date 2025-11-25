@@ -18,14 +18,12 @@
 //! For visualization helpers, see `visualization` module.
 
 // Nanoseconds in one second
+#[allow(dead_code)]
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
-
-// Display delay for smooth scrolling (1.5 seconds in nanoseconds)
-// This prevents gaps when low-rate data (HR, RR, HRV at ~1Hz) hasn't arrived yet
-const DISPLAY_DELAY_NS: u64 = 1_500_000_000;
 
 /// Time conversion constants
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum TimeUnit {
     Nanoseconds,
     Seconds,
@@ -41,31 +39,6 @@ impl TimeUnit {
     }
 }
 
-/// Time window duration for chart display
-#[derive(Debug, Clone, Copy)]
-pub enum ChartWindow {
-    /// 10 seconds
-    TenSeconds,
-    /// 30 seconds
-    ThirtySeconds,
-    /// 60 seconds
-    OneMinute,
-    /// 120 seconds
-    TwoMinutes,
-}
-
-impl ChartWindow {
-    /// Get the duration in nanoseconds
-    pub fn as_nanos(&self) -> u64 {
-        match self {
-            ChartWindow::TenSeconds => 10_000_000_000,
-            ChartWindow::ThirtySeconds => 30_000_000_000,
-            ChartWindow::OneMinute => 60_000_000_000,
-            ChartWindow::TwoMinutes => 120_000_000_000,
-        }
-    }
-}
-
 /// Individual timestamped data point
 pub struct Point {
     pub time: u64,   // Timestamp in nanoseconds
@@ -73,12 +46,29 @@ pub struct Point {
 }
 
 /// Trait for statistical operations on point slices
+#[allow(dead_code)]
 pub trait PointSliceExt {
+    fn min_max_time(&self) -> Option<(u64, u64)>;
+    fn min_max_value(&self) -> Option<(i32, i32)>;
     fn rmssd(&self) -> f64;
 }
 
 // Implement the trait for a slice of `Point`
 impl PointSliceExt for &[Point] {
+    fn min_max_time(&self) -> Option<(u64, u64)> {
+        self.iter().fold(None, |acc, point| match acc {
+            None => Some((point.time, point.time)),
+            Some((min, max)) => Some((min.min(point.time), max.max(point.time))),
+        })
+    }
+
+    fn min_max_value(&self) -> Option<(i32, i32)> {
+        self.iter().fold(None, |acc, point| match acc {
+            None => Some((point.value, point.value)),
+            Some((min, max)) => Some((min.min(point.value), max.max(point.value))),
+        })
+    }
+
     // RMSSD (Root Mean Square of Successive Differences)
     fn rmssd(&self) -> f64 {
         let mut sum = 0.0;
@@ -173,22 +163,6 @@ impl TimeSeries {
         let start_idx = self.data.partition_point(|p| p.time < cutoff_time);
         
         &self.data[start_idx..]
-    }
-
-    /// Get the current display reference time with optional smooth scrolling delay
-    /// When smooth_streaming is true, returns current time minus a fixed delay to enable smooth scrolling
-    /// and prevent gaps in low-rate data streams.
-    /// When smooth_streaming is false, returns current time for immediate rendering.
-    pub fn current_display_time(smooth_streaming: bool) -> u64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-        if smooth_streaming {
-            now.saturating_sub(DISPLAY_DELAY_NS)
-        } else {
-            now
-        }
     }
 
     /// Get points within a specific time range [end_time - duration_ns, end_time]

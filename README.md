@@ -11,11 +11,68 @@ Real-time biosignal monitoring for Polar H10 heart rate sensors.
 - **Connection Management** - Easy connect/disconnect with visual feedback
 - **Modern UI** - Clean interface built with Iced
 
+## Platform Support
+
+ZenSignal is **fully cross-platform** and supports:
+
+- ✅ **Windows 10/11** - Uses Windows Bluetooth LE APIs
+- ✅ **macOS** - Native CoreBluetooth support
+- ✅ **Linux** - BlueZ D-Bus integration
+
+### Platform-Specific Requirements
+
+#### macOS
+- macOS Big Sur (11) or later
+- Bluetooth permission required: Go to **System Settings → Privacy & Security → Bluetooth** and enable for your terminal application
+
+#### Windows
+- Windows 10 version 1703 (Creators Update) or later
+- Bluetooth LE adapter
+- No additional permissions required
+
+#### Linux
+- BlueZ 5.44 or later
+- D-Bus (usually pre-installed)
+- User must be in the `bluetooth` group: `sudo usermod -a -G bluetooth $USER`
+- May require additional permissions: `sudo setcap cap_net_raw+ep target/debug/zen-signal`
+
 ## Requirements
 
 - Rust 1.70+
-- Bluetooth adapter
+- Bluetooth LE adapter
 - Polar H10 heart rate sensor
+- Platform-specific dependencies (see above)
+
+## Usageing
+
+### All Platforms
+
+```bash
+# Clone the repository
+git clone https://github.com/jacquayj/zen-signal.git
+cd zen-signal
+
+# Build and run
+cargo run --release
+```
+
+### Linux-Specific Setup
+
+If you encounter Bluetooth permission issues:
+
+```bash
+# Add your user to the bluetooth group
+sudo usermod -a -G bluetooth $USER
+
+# Log out and back in, then build
+cargo build --release
+
+# Grant network capabilities (required for BLE scanning)
+sudo setcap cap_net_raw+ep target/release/zen-signal
+
+# Run the application
+./target/release/zen-signal
+```
 
 ## Usage
 

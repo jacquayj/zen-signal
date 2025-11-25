@@ -10,6 +10,11 @@
 //! - `add_start_boundary_point`: Ensure data at window left edge
 //! - `add_end_boundary_point`: Ensure data at window right edge
 //! - `range_from_time_interpolated`: Complete interpolation pipeline
+//! - `current_display_time`: Calculate reference time for smooth scrolling
+//!
+//! ## Display Timing
+//! The `current_display_time` function provides a reference time for chart rendering
+//! with optional delay for smooth streaming of low-rate data.
 //!
 //! ## Why Interpolation
 //! Low sample rate data (HR, RR at ~1Hz) appears steppy without interpolation.
@@ -17,6 +22,60 @@
 //! raw data when interpolation is disabled.
 
 use crate::timeseries::{Point, TimeSeries};
+
+// Display delay for smooth scrolling (1.5 seconds in nanoseconds)
+// This prevents gaps when low-rate data (HR, RR, HRV at ~1Hz) hasn't arrived yet
+const DISPLAY_DELAY_NS: u64 = 1_500_000_000;
+
+/// Time window duration for chart display
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+pub enum ChartWindow {
+    /// 10 seconds
+    TenSeconds,
+    /// 30 seconds
+    ThirtySeconds,
+    /// 60 seconds
+    OneMinute,
+    /// 120 seconds
+    TwoMinutes,
+}
+
+impl ChartWindow {
+    /// Get the duration in nanoseconds
+    pub fn as_nanos(&self) -> u64 {
+        match self {
+            ChartWindow::TenSeconds => 10_000_000_000,
+            ChartWindow::ThirtySeconds => 30_000_000_000,
+            ChartWindow::OneMinute => 60_000_000_000,
+            ChartWindow::TwoMinutes => 120_000_000_000,
+        }
+    }
+}
+
+/// Get the current display reference time with optional smooth scrolling delay
+///
+/// ## Why
+/// When smooth_streaming is true, returns current time minus a fixed delay to enable
+/// smooth scrolling and prevent gaps in low-rate data streams.
+/// When smooth_streaming is false, returns current time for immediate rendering.
+///
+/// ## Parameters
+/// - `smooth_streaming`: Whether to apply delay for smooth scrolling
+///
+/// ## Returns
+/// Current system time in nanoseconds, optionally adjusted by DISPLAY_DELAY_NS
+pub fn current_display_time(smooth_streaming: bool) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    if smooth_streaming {
+        now.saturating_sub(DISPLAY_DELAY_NS)
+    } else {
+        now
+    }
+}
 
 /// Linear interpolation between two points at a specific time
 ///

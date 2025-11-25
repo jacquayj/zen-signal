@@ -1,6 +1,6 @@
 use crate::app::{Message, ZenSignal};
-use crate::timeseries::{ChartWindow, TimeUnit};
-use crate::visualization::range_from_time_interpolated;
+use crate::timeseries::TimeUnit;
+use crate::visualization::{range_from_time_interpolated, current_display_time, ChartWindow};
 use plotters::chart::ChartBuilder;
 use plotters::series::LineSeries;
 use plotters::style::{BLUE, CYAN, GREEN, MAGENTA, RED, RGBColor};
@@ -51,13 +51,11 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        use crate::timeseries::TimeSeries;
-        
         let ecg_series = &self.state.channels.ecg;
         // Show last 10 seconds of ECG data
         let window = ChartWindow::TenSeconds.as_nanos();
         let smooth_streaming = self.state.config.smooth_data_streaming;
-        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        let display_time = current_display_time(smooth_streaming);
         let points = ecg_series.range_from_time(display_time, window);
         
         let mut chart = builder
@@ -93,13 +91,11 @@ impl<'a> Chart<Message> for HrChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        use crate::timeseries::TimeSeries;
-        
         let hr_series = &self.state.channels.hr;
         // Show last 10 seconds of HR data
         let window = ChartWindow::TenSeconds.as_nanos();
         let smooth_streaming = self.state.config.smooth_data_streaming;
-        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        let display_time = current_display_time(smooth_streaming);
         
         // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
         let points = range_from_time_interpolated(hr_series, display_time, window, 100_000_000, smooth_streaming);
@@ -137,13 +133,11 @@ impl<'a> Chart<Message> for RrChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        use crate::timeseries::TimeSeries;
-        
         let rr_series = &self.state.channels.rr;
         // Show last 10 seconds of RR data
         let window = ChartWindow::TenSeconds.as_nanos();
         let smooth_streaming = self.state.config.smooth_data_streaming;
-        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        let display_time = current_display_time(smooth_streaming);
         
         // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
         let points = range_from_time_interpolated(rr_series, display_time, window, 100_000_000, smooth_streaming);
@@ -181,13 +175,11 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        use crate::timeseries::TimeSeries;
-        
         let hrv_series = &self.state.channels.hrv;
         // Show last 10 seconds of HRV (RMSSD) data
         let window = ChartWindow::TenSeconds.as_nanos();
         let smooth_streaming = self.state.config.smooth_data_streaming;
-        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        let display_time = current_display_time(smooth_streaming);
         
         // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
         let points = range_from_time_interpolated(hrv_series, display_time, window, 100_000_000, smooth_streaming);
@@ -225,13 +217,11 @@ impl<'a> Chart<Message> for AccChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        use crate::timeseries::TimeSeries;
-        
         let acc_x_series = &self.state.channels.acc_x;
         // Show last 10 seconds of accelerometer data
         let window = ChartWindow::TenSeconds.as_nanos();
         let smooth_streaming = self.state.config.smooth_data_streaming;
-        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        let display_time = current_display_time(smooth_streaming);
         let x_points = acc_x_series.range_from_time(display_time, window);
 
         let acc_y_series = &self.state.channels.acc_y;
