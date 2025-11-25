@@ -1,0 +1,265 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: Build macOS Binary
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build for Apple Silicon (aarch64)
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          strip target/aarch64-apple-darwin/release/zen-signal
+
+      - name: Build for Intel (x86_64)
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          strip target/x86_64-apple-darwin/release/zen-signal
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/aarch64-apple-darwin/release/zen-signal \
+            target/x86_64-apple-darwin/release/zen-signal \
+            -output zen-signal-macos-universal
+
+      - name: Create macOS archive
+        run: |
+          mkdir -p release
+          tar -czf release/zen-signal-macos-universal.tar.gz zen-signal-macos-universal
+          tar -czf release/zen-signal-macos-aarch64.tar.gz -C target/aarch64-apple-darwin/release zen-signal
+          tar -czf release/zen-signal-macos-x86_64.tar.gz -C target/x86_64-apple-darwin/release zen-signal
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: macos-binaries
+          path: release/*.tar.gz
+
+  build-windows:
+    name: Build Windows Binary
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build for Windows
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Create Windows archive
+        run: |
+          mkdir release
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/zen-signal.exe -DestinationPath release/zen-signal-windows-x86_64.zip
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-binaries
+          path: release/*.zip
+
+  build-linux:
+    name: Build Linux Binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build for Linux
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu
+          strip target/x86_64-unknown-linux-gnu/release/zen-signal
+
+      - name: Create Linux archive
+        run: |
+          mkdir -p release
+          tar -czf release/zen-signal-linux-x86_64.tar.gz -C target/x86_64-unknown-linux-gnu/release zen-signal
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-binaries
+          path: release/*.tar.gz
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; > ../checksums.txt
+          cd ..
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## ZenSignal ${{ steps.get_version.outputs.VERSION }}
+            
+            ### Downloads
+            
+            **macOS**
+            - Universal Binary (Apple Silicon + Intel): `zen-signal-macos-universal.tar.gz`
+            - Apple Silicon only: `zen-signal-macos-aarch64.tar.gz`
+            - Intel only: `zen-signal-macos-x86_64.tar.gz`
+            
+            **Windows**
+            - 64-bit: `zen-signal-windows-x86_64.zip`
+            
+            **Linux**
+            - 64-bit: `zen-signal-linux-x86_64.tar.gz`
+            
+            ### Installation
+            
+            #### macOS
+            ```bash
+            tar -xzf zen-signal-macos-universal.tar.gz
+            chmod +x zen-signal-macos-universal
+            ./zen-signal-macos-universal
+            ```
+            
+            #### Windows
+            1. Extract `zen-signal-windows-x86_64.zip`
+            2. Run `zen-signal.exe`
+            
+            #### Linux
+            ```bash
+            tar -xzf zen-signal-linux-x86_64.tar.gz
+            chmod +x zen-signal
+            # Grant Bluetooth permissions
+            sudo setcap cap_net_raw+ep zen-signal
+            ./zen-signal
+            ```
+            
+            ### Requirements
+            - Bluetooth LE adapter
+            - Polar H10 heart rate sensor
+            - Platform-specific permissions (see README.md)
+            
+            ### Checksums
+            See `checksums.txt` for SHA256 hashes of all binaries.
+          files: |
+            artifacts/macos-binaries/*.tar.gz
+            artifacts/windows-binaries/*.zip
+            artifacts/linux-binaries/*.tar.gz
+            checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,6 +4,17 @@ Real-time biosignal monitoring for Polar H10 heart rate sensors.
 
 <img width="2672" height="1454" alt="image" src="https://github.com/user-attachments/assets/3f2f4a73-2af1-40a6-b7d1-17977ed2d6b8" />
 
+## Download
+
+**[📥 Download Latest Release](https://github.com/jacquayj/zen-signal/releases/latest)**
+
+Pre-built binaries available for:
+- 🍎 macOS (Universal, Apple Silicon, Intel)
+- 🪟 Windows 10/11 (64-bit)
+- 🐧 Linux (64-bit)
+
+Or [build from source](#building) below.
+
 ## Features
 
 - **Bluetooth Device Discovery** - Scan and connect to nearby Polar devices
@@ -43,9 +54,9 @@ ZenSignal is **fully cross-platform** and supports:
 - Polar H10 heart rate sensor
 - Platform-specific dependencies (see above)
 
-## Usageing
+## Building
 
-### All Platforms
+### Quick Start (All Platforms)
 
 ```bash
 # Clone the repository
@@ -55,6 +66,8 @@ cd zen-signal
 # Build and run
 cargo run --release
 ```
+
+For detailed build instructions and creating releases, see [BUILDING_AND_RELEASES.md](BUILDING_AND_RELEASES.md).
 
 ### Linux-Specific Setup
 

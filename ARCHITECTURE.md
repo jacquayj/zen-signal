@@ -27,7 +27,9 @@ graph TB
     subgraph "Data Processing"
         Channels[Channel Processors]
         TimeSeries[TimeSeries Storage]
+        Visualization[Visualization Helpers<br/>Interpolation & Display Timing]
         Channels --> TimeSeries
+        TimeSeries --> Visualization
     end
 
     subgraph "Communication Channels"
@@ -60,7 +62,8 @@ graph TB
     Handler -->|SensorUpdate| UpdateChannel
     UpdateChannel -->|Process Data| Channels
     Channels -->|Store| TimeSeries
-    TimeSeries -->|Render| Charts
+    TimeSeries -->|Query Range| Visualization
+    Visualization -->|Interpolate & Time| Charts
     Charts -->|Display| User
 
     %% Status feedback
@@ -124,8 +127,9 @@ graph TB
 - Data arrives sporadically
 - If we render "now", edge shows no data yet
 
-**Solution**: Display with 1.5s delay
+**Solution**: Display with 1.5s delay (implemented in `visualization` module)
 ```rust
+// visualization.rs
 const DISPLAY_DELAY_NS: u64 = 1_500_000_000; // 1.5 seconds
 
 pub fn current_display_time(smooth_streaming: bool) -> u64 {
@@ -218,10 +222,13 @@ src/
 ├── app.rs            # UI state, message handling, view composition  
 ├── connection.rs     # Connection management thread
 ├── sensor.rs         # Arctic integration, event handling
-├── timeseries.rs     # Data storage, interpolation
+├── polar_data.rs     # Polar-specific data processing and channels
+├── timeseries.rs     # Generic time series storage
+├── visualization.rs  # Display timing, interpolation helpers
 ├── charts.rs         # Plotters chart definitions
 ├── config.rs         # Settings persistence
 ├── device_scanner.rs # Bluetooth device discovery
+├── error.rs          # Error types and handling
 └── ui/
     ├── mod.rs        # UI module root
     └── styles.rs     # Button and widget styling
