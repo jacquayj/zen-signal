@@ -53,9 +53,10 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
         use crate::timeseries::TimeSeries;
         
         let ecg_series = &self.state.channels.ecg;
-        // Show last 10 seconds of ECG data with 1.5-second delay for smooth scrolling
+        // Show last 10 seconds of ECG data
         let window = ChartWindow::TenSeconds.as_nanos();
-        let display_time = TimeSeries::current_display_time();
+        let smooth_streaming = self.state.config.smooth_data_streaming;
+        let display_time = TimeSeries::current_display_time(smooth_streaming);
         let points = ecg_series.range_from_time(display_time, window);
         
         let mut chart = builder
@@ -94,11 +95,13 @@ impl<'a> Chart<Message> for HrChartType<'a> {
         use crate::timeseries::TimeSeries;
         
         let hr_series = &self.state.channels.hr;
-        // Show last 10 seconds of HR data with 1-second delay for smooth scrolling
-        // Use 100ms interpolation interval for smooth curves
+        // Show last 10 seconds of HR data
         let window = ChartWindow::TenSeconds.as_nanos();
-        let display_time = TimeSeries::current_display_time();
-        let points = hr_series.range_from_time_interpolated(display_time, window, 100_000_000);
+        let smooth_streaming = self.state.config.smooth_data_streaming;
+        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        
+        // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
+        let points = hr_series.range_from_time_interpolated(display_time, window, 100_000_000, smooth_streaming);
 
         let mut chart = builder
             .margin(15)
@@ -136,11 +139,13 @@ impl<'a> Chart<Message> for RrChartType<'a> {
         use crate::timeseries::TimeSeries;
         
         let rr_series = &self.state.channels.rr;
-        // Show last 10 seconds of RR data with 1-second delay for smooth scrolling
-        // Use 100ms interpolation interval for smooth curves
+        // Show last 10 seconds of RR data
         let window = ChartWindow::TenSeconds.as_nanos();
-        let display_time = TimeSeries::current_display_time();
-        let points = rr_series.range_from_time_interpolated(display_time, window, 100_000_000);
+        let smooth_streaming = self.state.config.smooth_data_streaming;
+        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        
+        // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
+        let points = rr_series.range_from_time_interpolated(display_time, window, 100_000_000, smooth_streaming);
 
         let mut chart = builder
             .margin(15)
@@ -178,11 +183,13 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
         use crate::timeseries::TimeSeries;
         
         let hrv_series = &self.state.channels.hrv;
-        // Show last 10 seconds of HRV (RMSSD) data with 1-second delay for smooth scrolling
-        // Use 100ms interpolation interval for smooth curves
+        // Show last 10 seconds of HRV (RMSSD) data
         let window = ChartWindow::TenSeconds.as_nanos();
-        let display_time = TimeSeries::current_display_time();
-        let points = hrv_series.range_from_time_interpolated(display_time, window, 100_000_000);
+        let smooth_streaming = self.state.config.smooth_data_streaming;
+        let display_time = TimeSeries::current_display_time(smooth_streaming);
+        
+        // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
+        let points = hrv_series.range_from_time_interpolated(display_time, window, 100_000_000, smooth_streaming);
 
         let mut chart = builder
             .margin(15)
@@ -220,9 +227,10 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         use crate::timeseries::TimeSeries;
         
         let acc_x_series = &self.state.channels.acc_x;
-        // Show last 10 seconds of accelerometer data with 1.5-second delay for smooth scrolling
+        // Show last 10 seconds of accelerometer data
         let window = ChartWindow::TenSeconds.as_nanos();
-        let display_time = TimeSeries::current_display_time();
+        let smooth_streaming = self.state.config.smooth_data_streaming;
+        let display_time = TimeSeries::current_display_time(smooth_streaming);
         let x_points = acc_x_series.range_from_time(display_time, window);
 
         let acc_y_series = &self.state.channels.acc_y;

@@ -352,15 +352,20 @@ impl TimeSeries {
         (start_time, latest_time)
     }
 
-    /// Get the current display reference time with smooth scrolling delay
-    /// This returns the current system time minus a fixed delay to enable smooth scrolling
-    /// and prevent gaps in low-rate data streams
-    pub fn current_display_time() -> u64 {
+    /// Get the current display reference time with optional smooth scrolling delay
+    /// When smooth_streaming is true, returns current time minus a fixed delay to enable smooth scrolling
+    /// and prevent gaps in low-rate data streams.
+    /// When smooth_streaming is false, returns current time for immediate rendering.
+    pub fn current_display_time(smooth_streaming: bool) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        now.saturating_sub(DISPLAY_DELAY_NS)
+        if smooth_streaming {
+            now.saturating_sub(DISPLAY_DELAY_NS)
+        } else {
+            now
+        }
     }
 
     /// Get points within a specific time range [end_time - duration_ns, end_time]
@@ -428,7 +433,8 @@ impl TimeSeries {
     /// Get points with linear interpolation for smooth curves
     /// Adds interpolated points between actual data points to create smoother lines
     /// target_interval_ns: desired time between interpolated points (e.g., 100ms = 100_000_000ns)
-    pub fn range_from_time_interpolated(&self, end_time: u64, duration_ns: u64, target_interval_ns: u64) -> Vec<Point> {
+    /// interpolate_end: if true, interpolates at end_time; if false, only interpolates at start_time
+    pub fn range_from_time_interpolated(&self, end_time: u64, duration_ns: u64, target_interval_ns: u64, interpolate_end: bool) -> Vec<Point> {
         if self.data.is_empty() {
             return Vec::new();
         }
@@ -511,43 +517,45 @@ impl TimeSeries {
             }
         }
         
-        // ALWAYS add an exact point at end_time by forward-interpolating
-        let last_before_end = points_for_interp.iter().rposition(|p| p.time <= end_time).unwrap_or(points_for_interp.len() - 1);
-        if last_before_end + 1 < points_for_interp.len() {
-            let p1 = &points_for_interp[last_before_end];
-            let p2 = &points_for_interp[last_before_end + 1];
-            
-            if p1.time <= end_time && p2.time >= end_time {
-                let time_diff = p2.time - p1.time;
-                let value_diff = p2.value - p1.value;
-                let time_from_p1 = end_time - p1.time;
-                let progress = time_from_p1 as f64 / time_diff as f64;
-                let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
+        // Conditionally add an exact point at end_time by forward-interpolating
+        if interpolate_end {
+            let last_before_end = points_for_interp.iter().rposition(|p| p.time <= end_time).unwrap_or(points_for_interp.len() - 1);
+            if last_before_end + 1 < points_for_interp.len() {
+                let p1 = &points_for_interp[last_before_end];
+                let p2 = &points_for_interp[last_before_end + 1];
                 
-                result.push(Point {
-                    time: end_time,
-                    value: interpolated_value.round() as i32,
-                });
-            }
-        } else if points_for_interp.len() >= 2 {
-            // Forward extrapolate from last two points
-            let p1 = &points_for_interp[points_for_interp.len() - 2];
-            let p2 = &points_for_interp[points_for_interp.len() - 1];
-            
-            if p2.time < end_time {
-                let time_diff = p2.time - p1.time;
-                let value_diff = p2.value - p1.value;
-                let time_from_p2 = end_time - p2.time;
-                
-                // Only extrapolate if gap is reasonable
-                if time_diff > 0 && time_from_p2 <= time_diff * 3 {
-                    let progress = time_from_p2 as f64 / time_diff as f64;
-                    let interpolated_value = p2.value as f64 + (value_diff as f64 * progress);
+                if p1.time <= end_time && p2.time >= end_time {
+                    let time_diff = p2.time - p1.time;
+                    let value_diff = p2.value - p1.value;
+                    let time_from_p1 = end_time - p1.time;
+                    let progress = time_from_p1 as f64 / time_diff as f64;
+                    let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
                     
                     result.push(Point {
                         time: end_time,
                         value: interpolated_value.round() as i32,
                     });
+                }
+            } else if points_for_interp.len() >= 2 {
+                // Forward extrapolate from last two points
+                let p1 = &points_for_interp[points_for_interp.len() - 2];
+                let p2 = &points_for_interp[points_for_interp.len() - 1];
+                
+                if p2.time < end_time {
+                    let time_diff = p2.time - p1.time;
+                    let value_diff = p2.value - p1.value;
+                    let time_from_p2 = end_time - p2.time;
+                    
+                    // Only extrapolate if gap is reasonable
+                    if time_diff > 0 && time_from_p2 <= time_diff * 3 {
+                        let progress = time_from_p2 as f64 / time_diff as f64;
+                        let interpolated_value = p2.value as f64 + (value_diff as f64 * progress);
+                        
+                        result.push(Point {
+                            time: end_time,
+                            value: interpolated_value.round() as i32,
+                        });
+                    }
                 }
             }
         }

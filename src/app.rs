@@ -43,6 +43,7 @@ pub enum Message {
     ConnectDevice,
     DisconnectDevice,
     ToggleAutoconnect(bool),
+    ToggleSmoothStreaming(bool),
 }
 
 impl ZenSignal {
@@ -188,6 +189,13 @@ impl ZenSignal {
                     return Task::perform(scan_devices(), Message::DevicesScanned);
                 }
                 
+                Task::none()
+            }
+            Message::ToggleSmoothStreaming(enabled) => {
+                self.config.smooth_data_streaming = enabled;
+                if let Err(e) = self.config.save() {
+                    println!("Failed to save config: {}", e);
+                }
                 Task::none()
             }
         }
@@ -451,6 +459,12 @@ impl ZenSignal {
             }
         };
 
+        let smooth_streaming_checkbox = checkbox(
+            "Smooth and Delay Streaming Data",
+            self.config.smooth_data_streaming
+        )
+        .on_toggle(Message::ToggleSmoothStreaming);
+
         let autoconnect_checkbox = checkbox(
             "Enable Autoconnect",
             self.config.enable_autoconnect
@@ -462,7 +476,8 @@ impl ZenSignal {
             scan_button,
             device_list,
             connect_button,
-            vertical_space(), // Push checkbox to bottom
+            vertical_space(), // Push checkboxes to bottom
+            smooth_streaming_checkbox,
             autoconnect_checkbox,
         ]
         .padding(20)

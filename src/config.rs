@@ -5,12 +5,14 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub enable_autoconnect: bool,
+    pub smooth_data_streaming: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             enable_autoconnect: false,
+            smooth_data_streaming: true,
         }
     }
 }
