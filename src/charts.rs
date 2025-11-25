@@ -1,5 +1,5 @@
 use crate::app::{Message, ZenSignal};
-use crate::timeseries::PointSliceExt;
+use crate::timeseries::{ChartWindow, PointSliceExt};
 use plotters::chart::ChartBuilder;
 use plotters::series::LineSeries;
 use plotters::style::{BLUE, CYAN, GREEN, MAGENTA, RED, RGBColor};
@@ -28,9 +28,11 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         let ecg_series = &self.state.channels.ecg;
-        let points = ecg_series.last_points(400);
+        // Show last 10 seconds of ECG data
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let points = ecg_series.last_duration(window);
         
-        let (min_time, max_time) = points.min_max_time().unwrap_or((0, 1));
+        let (min_time, max_time) = ecg_series.display_time_range(window);
         let (min_ecg, max_ecg) = points.min_max_value().unwrap_or((0, 1));
 
         let mut chart = builder
@@ -59,9 +61,11 @@ impl<'a> Chart<Message> for HrChartType<'a> {
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         let hr_series = &self.state.channels.hr;
-        let points = hr_series.last_points(400);
+        // Show last 10 seconds of HR data
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let points = hr_series.last_duration(window);
         
-        let (min_time, max_time) = points.min_max_time().unwrap_or((0, 1));
+        let (min_time, max_time) = hr_series.display_time_range(window);
 
         let mut chart = builder
             .margin(15)
@@ -92,10 +96,12 @@ impl<'a> Chart<Message> for RrChartType<'a> {
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         let rr_series = &self.state.channels.rr;
-        let points = rr_series.last_points(400);
+        // Show last 10 seconds of RR data
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let points = rr_series.last_duration(window);
         let rmssd = points.rmssd();
         
-        let (min_time, max_time) = points.min_max_time().unwrap_or((0, 1));
+        let (min_time, max_time) = rr_series.display_time_range(window);
 
         let mut chart = builder
             .margin(15)
@@ -129,15 +135,17 @@ impl<'a> Chart<Message> for AccChartType<'a> {
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         let acc_x_series = &self.state.channels.acc_x;
-        let x_points = acc_x_series.last_points(400);
+        // Show last 10 seconds of accelerometer data
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let x_points = acc_x_series.last_duration(window);
 
         let acc_y_series = &self.state.channels.acc_y;
-        let y_points = acc_y_series.last_points(400);
+        let y_points = acc_y_series.last_duration(window);
 
         let acc_z_series = &self.state.channels.acc_z;
-        let z_points = acc_z_series.last_points(400);
+        let z_points = acc_z_series.last_duration(window);
 
-        let (min_time, max_time) = x_points.min_max_time().unwrap_or((0, 1));
+        let (min_time, max_time) = acc_x_series.display_time_range(window);
 
         let (min_x_acc, max_x_acc) = x_points.min_max_value().unwrap_or((0, 1));
         let (min_y_acc, max_y_acc) = y_points.min_max_value().unwrap_or((0, 1));
