@@ -2,7 +2,7 @@
 
 Real-time biosignal monitoring for Polar H10 heart rate sensors.
 
-<img width="2628" height="1477" alt="image" src="https://github.com/user-attachments/assets/7d19c7cc-34e0-4058-abf2-46db1ebc5449" />
+<img width="2672" height="1454" alt="image" src="https://github.com/user-attachments/assets/3f2f4a73-2af1-40a6-b7d1-17977ed2d6b8" />
 
 ## Features
 
