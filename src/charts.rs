@@ -18,6 +18,9 @@ const HR_MAX_BPM: i32 = 180;
 const RR_MIN_MS: i32 = 400;
 const RR_MAX_MS: i32 = 1400;
 
+const HRV_MIN_MS: i32 = 0;
+const HRV_MAX_MS: i32 = 150;
+
 const ACC_MIN_MG: i32 = -8000;
 const ACC_MAX_MG: i32 = 8000;
 
@@ -31,6 +34,10 @@ pub struct HrChartType<'a> {
 }
 
 pub struct RrChartType<'a> {
+    pub state: &'a ZenSignal,
+}
+
+pub struct HrvChartType<'a> {
     pub state: &'a ZenSignal,
 }
 
@@ -157,6 +164,46 @@ impl<'a> Chart<Message> for RrChartType<'a> {
                     (time_sec, p.value)
                 }),
                 &BLUE,
+            ))
+            .expect("Failed to draw series");
+    }
+}
+
+// HRV Chart
+impl<'a> Chart<Message> for HrvChartType<'a> {
+    type State = ();
+
+    fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
+        let hrv_series = &self.state.channels.hrv;
+        // Show last 10 seconds of HRV (RMSSD) data
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let points = hrv_series.last_duration(window);
+        
+        let (min_time, _) = hrv_series.display_time_range(window);
+
+        let mut chart = builder
+            .margin(15)
+            .caption("HRV (RMSSD)", ("sans-serif", 20))
+            .x_label_area_size(30)
+            .y_label_area_size(40)
+            .build_cartesian_2d(0.0..CHART_TIME_WINDOW_SECONDS, HRV_MIN_MS..HRV_MAX_MS)
+            .expect("Failed to build chart");
+
+        chart.plotting_area().fill(&RGBColor(245, 245, 240)).expect("Failed to fill background");
+
+        chart.configure_mesh()
+            .x_desc("Time (s)")
+            .y_desc("RMSSD (ms)")
+            .axis_style(RGBColor(60, 60, 60))
+            .draw().expect("Failed to draw mesh");
+
+        chart
+            .draw_series(LineSeries::new(
+                points.iter().map(|p| {
+                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    (time_sec, p.value)
+                }),
+                &GREEN,
             ))
             .expect("Failed to draw series");
     }

@@ -58,6 +58,7 @@ pub struct Channels {
     pub acc_z: TimeSeries,
     pub hr: TimeSeries,
     pub rr: TimeSeries,
+    pub hrv: TimeSeries, // RMSSD over time
 }
 
 impl Channels {
@@ -69,6 +70,7 @@ impl Channels {
             acc_z: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
             hr: TimeSeries::new(1), // HR doesn't use sample rate for time calculations
             rr: TimeSeries::new(1), // RR doesn't use sample rate for time calculations
+            hrv: TimeSeries::new(1), // HRV (RMSSD) calculated periodically
         }
     }
 
@@ -116,6 +118,17 @@ impl Channels {
             for (i, &rr_value) in rr.iter().enumerate() {
                 let t = now - ((rr_len - i - 1) as u64 * time_spacing);
                 self.rr.add_point(t, rr_value as i32);
+            }
+            
+            // Calculate and store HRV (RMSSD) from recent RR intervals
+            // Use last 30 seconds of data for rolling RMSSD calculation
+            const THIRTY_SECONDS_NS: u64 = 30_000_000_000;
+            let recent_rr = self.rr.last_duration(THIRTY_SECONDS_NS);
+            
+            if recent_rr.len() >= 2 {
+                let rmssd = recent_rr.rmssd();
+                // Store RMSSD value as integer (rounded)
+                self.hrv.add_point(now, rmssd as i32);
             }
         }
     }

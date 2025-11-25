@@ -1,4 +1,4 @@
-use crate::charts::{AccChartType, EcgChartType, HrChartType, RrChartType};
+use crate::charts::{AccChartType, EcgChartType, HrChartType, HrvChartType, RrChartType};
 use crate::device_scanner::{scan_devices, BluetoothDevice};
 use crate::sensor::SensorUpdate;
 use crate::timeseries::Channels;
@@ -451,6 +451,10 @@ impl ZenSignal {
             .width(Length::Fill)
             .height(Length::Fill);
 
+        let hrv_chart = ChartWidget::new(HrvChartType { state: self })
+            .width(Length::Fill)
+            .height(Length::Fill);
+
         let acc_chart = ChartWidget::new(AccChartType { state: self })
             .width(Length::Fill)
             .height(Length::Fill);
@@ -458,7 +462,7 @@ impl ZenSignal {
         let stats = column![text(format!("Heart Rate: {}", hr)).size(24)]
             .width(Length::FillPortion(1));
 
-        let plots = column![ecg_chart, hr_chart, rr_chart, acc_chart]
+        let plots = column![ecg_chart, hr_chart, rr_chart, hrv_chart, acc_chart]
             .width(Length::FillPortion(3))
             .spacing(10);
 
