@@ -1,5 +1,6 @@
 mod app;
 mod charts;
+mod config;
 mod device_scanner;
 mod sensor;
 mod timeseries;

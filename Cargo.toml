@@ -12,6 +12,9 @@ btleplug = "0.9"
 chrono = "0.4.37"
 iced = { version = "0.13", features = ["tokio"] }
 tokio = { version = "1.19.2", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+dirs = "5.0"
 
 [dependencies.plotters]
 version = "0.3.5"

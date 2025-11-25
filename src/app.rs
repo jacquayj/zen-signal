@@ -1,8 +1,9 @@
 use crate::charts::{AccChartType, EcgChartType, HrChartType, HrvChartType, RrChartType};
+use crate::config::Config;
 use crate::device_scanner::{scan_devices, BluetoothDevice};
 use crate::sensor::SensorUpdate;
 use crate::timeseries::Channels;
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, checkbox, column, container, row, scrollable, text, vertical_space};
 use iced::{Element, Length, Subscription, Task};
 use plotters_iced::ChartWidget;
 use std::sync::mpsc::Receiver;
@@ -29,6 +30,8 @@ pub struct ZenSignal {
     pub available_devices: Vec<BluetoothDevice>,
     pub selected_device: Option<BluetoothDevice>,
     connect_sender: std::sync::mpsc::Sender<ConnectionCommand>,
+    pub config: Config,
+    manual_disconnect: bool, // Track if user manually disconnected
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +42,7 @@ pub enum Message {
     SelectDevice(BluetoothDevice),
     ConnectDevice,
     DisconnectDevice,
+    ToggleAutoconnect(bool),
 }
 
 impl ZenSignal {
@@ -46,16 +50,25 @@ impl ZenSignal {
         receiver: Receiver<SensorUpdate>,
         connect_sender: std::sync::mpsc::Sender<ConnectionCommand>,
     ) -> (Self, Task<Message>) {
+        let config = Config::load();
+        let should_autoconnect = config.enable_autoconnect;
+        
         (
             ZenSignal {
                 channels: Channels::new(),
                 receiver,
-                connection_state: ConnectionState::Disconnected,
+                connection_state: if should_autoconnect { ConnectionState::Scanning } else { ConnectionState::Disconnected },
                 available_devices: Vec::new(),
                 selected_device: None,
                 connect_sender,
+                config,
+                manual_disconnect: false,
             },
-            Task::none(),
+            if should_autoconnect {
+                Task::perform(scan_devices(), Message::DevicesScanned)
+            } else {
+                Task::none()
+            },
         )
     }
 
@@ -116,6 +129,18 @@ impl ZenSignal {
                 self.connection_state = ConnectionState::Disconnected;
                 match result {
                     Ok(devices) => {
+                        // Auto-connect to first Polar device if enabled and not manually disconnected
+                        if self.config.enable_autoconnect && !self.manual_disconnect && !devices.is_empty() {
+                            if let Some(polar_device) = devices.iter().find(|d| d.name.to_lowercase().contains("polar")) {
+                                self.selected_device = Some(polar_device.clone());
+                                self.connection_state = ConnectionState::Connecting;
+                                if let Err(e) = self.connect_sender.send(ConnectionCommand::Connect(polar_device.id.clone())) {
+                                    println!("Failed to send autoconnect request: {}", e);
+                                    self.connection_state = ConnectionState::Disconnected;
+                                }
+                            }
+                        }
+                        
                         self.available_devices = devices;
                     }
                     Err(e) => {
@@ -140,12 +165,29 @@ impl ZenSignal {
             }
             Message::DisconnectDevice => {
                 println!("UI: Sending disconnect command");
+                self.manual_disconnect = true; // Mark as manual disconnect
                 if let Err(e) = self.connect_sender.send(ConnectionCommand::Disconnect) {
                     println!("Failed to send disconnect request: {}", e);
                 } else {
                     println!("UI: Disconnect command sent successfully");
                 }
                 // State will be updated when we receive ConnectionStatus::Disconnected
+                Task::none()
+            }
+            Message::ToggleAutoconnect(enabled) => {
+                self.config.enable_autoconnect = enabled;
+                if let Err(e) = self.config.save() {
+                    println!("Failed to save config: {}", e);
+                }
+                
+                // If enabling autoconnect, reset manual disconnect flag and scan
+                if enabled && self.connection_state == ConnectionState::Disconnected {
+                    self.manual_disconnect = false; // Reset manual disconnect flag
+                    self.connection_state = ConnectionState::Scanning;
+                    self.available_devices.clear();
+                    return Task::perform(scan_devices(), Message::DevicesScanned);
+                }
+                
                 Task::none()
             }
         }
@@ -192,7 +234,12 @@ impl ZenSignal {
         .padding(10);
 
         let device_list: Element<'_, Message> = if self.available_devices.is_empty() {
-            text("No devices found. Click 'Scan for Devices' to start.").into()
+            let message = if self.connection_state == ConnectionState::Scanning {
+                "Scanning for devices..."
+            } else {
+                "No devices found. Click 'Scan for Devices' to start."
+            };
+            text(message).into()
         } else {
             let is_connected = self.connection_state == ConnectionState::Connected;
             let devices = self.available_devices.iter().map(|device| {
@@ -404,10 +451,23 @@ impl ZenSignal {
             }
         };
 
-        let sidebar_content = column![title, scan_button, device_list, connect_button]
-            .spacing(10)
-            .padding(20)
-            .width(300);
+        let autoconnect_checkbox = checkbox(
+            "Enable Autoconnect",
+            self.config.enable_autoconnect
+        )
+        .on_toggle(Message::ToggleAutoconnect);
+
+        let sidebar_content = column![
+            title,
+            scan_button,
+            device_list,
+            connect_button,
+            vertical_space(), // Push checkbox to bottom
+            autoconnect_checkbox,
+        ]
+        .padding(20)
+        .spacing(10)
+        .width(300);
 
         container(sidebar_content)
             .style(container::bordered_box)
