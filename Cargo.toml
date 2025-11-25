@@ -4,6 +4,15 @@ version = "0.1.0"
 authors = ["John Jacquay <jjacquay712@gmail.com>"]
 edition = "2021"
 
+# Windows-specific: Hide console window for GUI application
+[[bin]]
+name = "zen-signal"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+lto = true
+
 
 [dependencies]
 # arctic = "1.0.0"
