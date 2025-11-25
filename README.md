@@ -2,6 +2,8 @@
 
 Real-time biosignal monitoring for Polar H10 heart rate sensors.
 
+<img width="1761" height="1053" alt="image" src="https://github.com/user-attachments/assets/841ef7d5-ea3f-4ead-92ab-f62207284a48" />
+
 ## Features
 
 - **Bluetooth Device Discovery** - Scan and connect to nearby Polar devices
