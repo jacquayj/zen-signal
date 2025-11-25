@@ -11,6 +11,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -69,11 +72,64 @@ jobs:
           tar -czf release/zen-signal-macos-aarch64.tar.gz -C target/aarch64-apple-darwin/release zen-signal
           tar -czf release/zen-signal-macos-x86_64.tar.gz -C target/x86_64-apple-darwin/release zen-signal
 
+      - name: Create DMG installer
+        run: |
+          # Create app bundle structure
+          mkdir -p "ZenSignal.app/Contents/MacOS"
+          mkdir -p "ZenSignal.app/Contents/Resources"
+          
+          # Copy universal binary
+          cp zen-signal-macos-universal "ZenSignal.app/Contents/MacOS/zen-signal"
+          chmod +x "ZenSignal.app/Contents/MacOS/zen-signal"
+          
+          # Create Info.plist
+          cat > "ZenSignal.app/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>zen-signal</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.github.jacquayj.zen-signal</string>
+              <key>CFBundleName</key>
+              <string>ZenSignal</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSBluetoothAlwaysUsageDescription</key>
+              <string>ZenSignal needs Bluetooth access to connect to your Polar H10 heart rate sensor.</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          
+          # Create temporary DMG directory
+          mkdir -p dmg-build
+          cp -R ZenSignal.app dmg-build/
+          
+          # Create Applications symlink
+          ln -s /Applications dmg-build/Applications
+          
+          # Create DMG
+          hdiutil create -volname "ZenSignal" \
+            -srcfolder dmg-build \
+            -ov -format UDZO \
+            release/ZenSignal-macos.dmg
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-binaries
-          path: release/*.tar.gz
+          path: |
+            release/*.tar.gz
+            release/*.dmg
 
   build-windows:
     name: Build Windows Binary
@@ -174,8 +230,6 @@ jobs:
     name: Create GitHub Release
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -216,6 +270,7 @@ jobs:
             
             **macOS**
             - Universal Binary (Apple Silicon + Intel): `zen-signal-macos-universal.tar.gz`
+            - **DMG Installer (Recommended)**: `ZenSignal-macos.dmg`
             - Apple Silicon only: `zen-signal-macos-aarch64.tar.gz`
             - Intel only: `zen-signal-macos-x86_64.tar.gz`
             
@@ -228,6 +283,13 @@ jobs:
             ### Installation
             
             #### macOS
+            **DMG Installer (Easiest):**
+            1. Download `ZenSignal-macos.dmg`
+            2. Open the DMG
+            3. Drag ZenSignal.app to Applications folder
+            4. Launch from Applications
+            
+            **Terminal Archive:**
             ```bash
             tar -xzf zen-signal-macos-universal.tar.gz
             chmod +x zen-signal-macos-universal
@@ -256,6 +318,7 @@ jobs:
             See `checksums.txt` for SHA256 hashes of all binaries.
           files: |
             artifacts/macos-binaries/*.tar.gz
+            artifacts/macos-binaries/*.dmg
             artifacts/windows-binaries/*.zip
             artifacts/linux-binaries/*.tar.gz
             checksums.txt

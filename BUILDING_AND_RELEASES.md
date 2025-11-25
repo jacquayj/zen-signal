@@ -134,7 +134,8 @@ git push origin v0.1.0
 - Check https://github.com/jacquayj/zen-signal/releases
 
 **What Gets Built:**
-- macOS Universal (Apple Silicon + Intel)
+- macOS DMG Installer (Universal - recommended)
+- macOS Universal tarball (Apple Silicon + Intel)
 - macOS Apple Silicon only
 - macOS Intel only
 - Windows 64-bit
@@ -187,6 +188,12 @@ tar -xzf zen-signal-macos-universal.tar.gz
 chmod +x zen-signal-macos-universal
 ./zen-signal-macos-universal
 ```
+
+**Or use DMG Installer (Recommended):**
+1. Download `ZenSignal-macos.dmg`
+2. Open the DMG file
+3. Drag `ZenSignal.app` to Applications folder
+4. Launch from Applications (Launchpad or Finder)
 
 **First run:** Right-click → Open (to bypass Gatekeeper)
 **Permissions:** System Settings → Privacy & Security → Bluetooth
@@ -271,6 +278,7 @@ https://github.com/jacquayj/zen-signal/releases
 ## File Locations
 
 After building, files are in `release/`:
+- `ZenSignal-macos.dmg` - macOS installer (drag & drop to Applications)
 - `zen-signal-macos-universal.tar.gz` - macOS (both architectures)
 - `zen-signal-macos-aarch64.tar.gz` - macOS Apple Silicon
 - `zen-signal-macos-x86_64.tar.gz` - macOS Intel
