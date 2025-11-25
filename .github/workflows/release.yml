@@ -275,74 +275,84 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; > ../checksums.txt
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.dmg" \) -exec sha256sum {} \; > ../checksums.txt
           cd ..
           cat checksums.txt
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          name: Release ${{ steps.get_version.outputs.VERSION }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          body: |
-            ## ZenSignal ${{ steps.get_version.outputs.VERSION }}
-            
-            ### Downloads
-            
-            **macOS**
-            - Universal Binary (Apple Silicon + Intel): `zen-signal-macos-universal.tar.gz`
-            - **DMG Installer (Recommended)**: `ZenSignal-macos.dmg`
-            - Apple Silicon only: `zen-signal-macos-aarch64.tar.gz`
-            - Intel only: `zen-signal-macos-x86_64.tar.gz`
-            
-            **Windows**
-            - 64-bit: `zen-signal-windows-x86_64.zip`
-            
-            **Linux**
-            - 64-bit: `zen-signal-linux-x86_64.tar.gz`
-            
-            ### Installation
-            
-            #### macOS
-            **DMG Installer (Easiest):**
-            1. Download `ZenSignal-macos.dmg`
-            2. Open the DMG
-            3. Drag ZenSignal.app to Applications folder
-            4. Launch from Applications
-            
-            **Terminal Archive:**
-            ```bash
-            tar -xzf zen-signal-macos-universal.tar.gz
-            chmod +x zen-signal-macos-universal
-            ./zen-signal-macos-universal
-            ```
-            
-            #### Windows
-            1. Extract `zen-signal-windows-x86_64.zip`
-            2. Run `zen-signal.exe`
-            
-            #### Linux
-            ```bash
-            tar -xzf zen-signal-linux-x86_64.tar.gz
-            chmod +x zen-signal
-            # Grant Bluetooth permissions
-            sudo setcap cap_net_raw+ep zen-signal
-            ./zen-signal
-            ```
-            
-            ### Requirements
-            - Bluetooth LE adapter
-            - Polar H10 heart rate sensor
-            - Platform-specific permissions (see README.md)
-            
-            ### Checksums
-            See `checksums.txt` for SHA256 hashes of all binaries.
-          files: |
-            artifacts/macos-binaries/*.tar.gz
-            artifacts/macos-binaries/*.dmg
-            artifacts/windows-binaries/*.zip
-            artifacts/linux-binaries/*.tar.gz
-            checksums.txt
-          draft: false
-          prerelease: false
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          cp artifacts/macos-binaries/*.tar.gz release-files/ 2>/dev/null || true
+          cp artifacts/macos-binaries/*.dmg release-files/ 2>/dev/null || true
+          cp artifacts/windows-binaries/*.zip release-files/ 2>/dev/null || true
+          cp artifacts/linux-binaries/*.tar.gz release-files/ 2>/dev/null || true
+          cp checksums.txt release-files/
+          ls -lh release-files/
+
+      - name: Create Release with GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          
+          # Create release notes
+          cat > release-notes.md << 'EOF'
+          ## ZenSignal ${{ steps.get_version.outputs.VERSION }}
+          
+          ### Downloads
+          
+          **macOS**
+          - Universal Binary (Apple Silicon + Intel): `zen-signal-macos-universal.tar.gz`
+          - **DMG Installer (Recommended)**: `ZenSignal-macos.dmg`
+          - Apple Silicon only: `zen-signal-macos-aarch64.tar.gz`
+          - Intel only: `zen-signal-macos-x86_64.tar.gz`
+          
+          **Windows**
+          - 64-bit: `zen-signal-windows-x86_64.zip`
+          
+          **Linux**
+          - 64-bit: `zen-signal-linux-x86_64.tar.gz`
+          
+          ### Installation
+          
+          #### macOS
+          **DMG Installer (Easiest):**
+          1. Download `ZenSignal-macos.dmg`
+          2. Open the DMG
+          3. Drag ZenSignal.app to Applications folder
+          4. Launch from Applications
+          
+          **Terminal Archive:**
+          ```bash
+          tar -xzf zen-signal-macos-universal.tar.gz
+          chmod +x zen-signal-macos-universal
+          ./zen-signal-macos-universal
+          ```
+          
+          #### Windows
+          1. Extract `zen-signal-windows-x86_64.zip`
+          2. Run `zen-signal.exe`
+          
+          #### Linux
+          ```bash
+          tar -xzf zen-signal-linux-x86_64.tar.gz
+          chmod +x zen-signal
+          # Grant Bluetooth permissions
+          sudo setcap cap_net_raw+ep zen-signal
+          ./zen-signal
+          ```
+          
+          ### Requirements
+          - Bluetooth LE adapter
+          - Polar H10 heart rate sensor
+          - Platform-specific permissions (see README.md)
+          
+          ### Checksums
+          See `checksums.txt` for SHA256 hashes of all binaries.
+          EOF
+          
+          # Create the release
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --notes-file release-notes.md \
+            release-files/*
