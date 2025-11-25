@@ -291,9 +291,12 @@ jobs:
 
       - name: Create Release with GitHub CLI
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           VERSION="${{ steps.get_version.outputs.VERSION }}"
+          
+          # Get the commit SHA for this tag
+          COMMIT_SHA="${{ github.sha }}"
           
           # Create release notes
           cat > release-notes.md << 'EOF'
@@ -351,8 +354,9 @@ jobs:
           See `checksums.txt` for SHA256 hashes of all binaries.
           EOF
           
-          # Create the release
+          # Create the release with target commit
           gh release create "$VERSION" \
             --title "Release $VERSION" \
             --notes-file release-notes.md \
+            --target "$COMMIT_SHA" \
             release-files/*
