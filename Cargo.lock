@@ -123,8 +123,7 @@ dependencies = [
 [[package]]
 name = "arctic"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73381a59d102b4a90d8cf930ff82663024c95f7e25e1a65979e754111b998fc8"
+source = "git+https://github.com/jacquayj/arctic.git?branch=main#270193ffcc33ae3813d25016b69a97b44213e938"
 dependencies = [
  "async-trait",
  "btleplug",

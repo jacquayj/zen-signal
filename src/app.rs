@@ -92,6 +92,11 @@ impl ZenSignal {
                                 SensorUpdate::MeasurementData(data) => {
                                     self.channels.handle_measurement_data(data);
                                 }
+                                SensorUpdate::SampleRateConfig { ecg_rate, acc_rate } => {
+                                    println!("Updating sample rates: ECG={} Hz, ACC={} Hz", ecg_rate, acc_rate);
+                                    self.channels.set_ecg_sample_rate(ecg_rate);
+                                    self.channels.set_acc_sample_rate(acc_rate);
+                                }
                             }
                         }
                         Err(_) => {

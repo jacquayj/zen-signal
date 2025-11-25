@@ -6,7 +6,8 @@ edition = "2021"
 
 
 [dependencies]
-arctic = "1.0.0"
+# arctic = "1.0.0"
+arctic = { git = "https://github.com/jacquayj/arctic.git", branch = "main" }
 btleplug = "0.9"
 chrono = "0.4.37"
 iced = { version = "0.13", features = ["tokio"] }

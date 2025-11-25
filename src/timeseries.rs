@@ -1,8 +1,10 @@
 use arctic::PmdData;
 
-// Sample rates configured in the arctic library for Polar H10 device
-const ECG_SAMPLE_RATE_HZ: u64 = 130; // ECG sampling rate in Hz (hardcoded in arctic/src/lib.rs)
-const ACC_SAMPLE_RATE_HZ: u64 = 200; // Accelerometer sampling rate in Hz (default in arctic)
+// Sample rates configured for Polar H10 device
+// Note: These should match the rates configured via polar.ecg_sample_rate() and polar.acc_sample_rate()
+// The actual rate is queried from the device and set to maximum in sensor.rs
+const ECG_SAMPLE_RATE_HZ: u64 = 130; // Default ECG sampling rate in Hz (can be configured)
+const ACC_SAMPLE_RATE_HZ: u64 = 200; // Default accelerometer sampling rate in Hz
 
 // Nanoseconds in one second
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
@@ -19,13 +21,23 @@ pub struct Channels {
 impl Channels {
     pub fn new() -> Self {
         Self {
-            ecg: TimeSeries::new(),
-            acc_x: TimeSeries::new(),
-            acc_y: TimeSeries::new(),
-            acc_z: TimeSeries::new(),
-            hr: TimeSeries::new(),
-            rr: TimeSeries::new(),
+            ecg: TimeSeries::new(ECG_SAMPLE_RATE_HZ),
+            acc_x: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
+            acc_y: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
+            acc_z: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
+            hr: TimeSeries::new(1), // HR doesn't use sample rate for time calculations
+            rr: TimeSeries::new(1), // RR doesn't use sample rate for time calculations
         }
+    }
+
+    pub fn set_ecg_sample_rate(&mut self, rate: u64) {
+        self.ecg.set_sample_rate(rate);
+    }
+
+    pub fn set_acc_sample_rate(&mut self, rate: u64) {
+        self.acc_x.set_sample_rate(rate);
+        self.acc_y.set_sample_rate(rate);
+        self.acc_z.set_sample_rate(rate);
     }
 
     pub fn handle_heart_rate(&mut self, hr: arctic::HeartRate) {
@@ -60,7 +72,7 @@ impl Channels {
             match d {
                 PmdData::Acc(acc) => {
                     // Calculate time delta between samples based on configured sample rate
-                    let acc_timestep = NANOS_PER_SECOND / ACC_SAMPLE_RATE_HZ;
+                    let acc_timestep = NANOS_PER_SECOND / self.acc_x.sample_rate();
 
                     let t = timestamp + (inx as u64 * acc_timestep);
                     let acc = acc.data();
@@ -71,7 +83,7 @@ impl Channels {
                 }
                 PmdData::Ecg(ecg) => {
                     // Calculate time delta between samples based on configured sample rate
-                    let ecg_timestep = NANOS_PER_SECOND / ECG_SAMPLE_RATE_HZ;
+                    let ecg_timestep = NANOS_PER_SECOND / self.ecg.sample_rate();
                     self.ecg
                         .add_point(timestamp + (inx as u64 * ecg_timestep), *ecg.val());
                 }
@@ -87,6 +99,7 @@ pub struct Point {
 
 pub struct TimeSeries {
     data: Vec<Point>,
+    sample_rate: u64, // Sample rate in Hz
 }
 
 pub trait PointSliceExt {
@@ -125,8 +138,19 @@ impl PointSliceExt for &[Point] {
 }
 
 impl TimeSeries {
-    pub fn new() -> Self {
-        Self { data: Vec::new() }
+    pub fn new(sample_rate: u64) -> Self {
+        Self { 
+            data: Vec::new(),
+            sample_rate,
+        }
+    }
+
+    pub fn set_sample_rate(&mut self, rate: u64) {
+        self.sample_rate = rate;
+    }
+
+    pub fn sample_rate(&self) -> u64 {
+        self.sample_rate
     }
 
     pub fn add_point(&mut self, time: u64, value: i32) {
