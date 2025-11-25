@@ -439,6 +439,16 @@ impl ZenSignal {
         let last_hr_point = hr_series.last_points(1);
         let hr = last_hr_point.last().map(|point| point.value).unwrap_or(0);
 
+        // Calculate RMSSD from last 30 seconds of RR data
+        use crate::timeseries::PointSliceExt;
+        const THIRTY_SECONDS_NS: u64 = 30_000_000_000;
+        let recent_rr = self.channels.rr.last_duration(THIRTY_SECONDS_NS);
+        let rmssd = if recent_rr.len() >= 2 {
+            recent_rr.rmssd()
+        } else {
+            0.0
+        };
+
         let ecg_chart = ChartWidget::new(EcgChartType { state: self })
             .width(Length::Fill)
             .height(Length::Fill);
@@ -459,7 +469,11 @@ impl ZenSignal {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let stats = column![text(format!("Heart Rate: {}", hr)).size(24)]
+        let stats = column![
+            text(format!("Heart Rate: {} bpm", hr)).size(24),
+            text(format!("RMSSD: {:.2} ms", rmssd)).size(20)
+        ]
+            .spacing(10)
             .width(Length::FillPortion(1));
 
         let plots = column![ecg_chart, hr_chart, rr_chart, hrv_chart, acc_chart]

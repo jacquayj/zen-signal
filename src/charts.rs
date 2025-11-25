@@ -1,5 +1,5 @@
 use crate::app::{Message, ZenSignal};
-use crate::timeseries::{ChartWindow, PointSliceExt, TimeUnit};
+use crate::timeseries::{ChartWindow, TimeUnit};
 use plotters::chart::ChartBuilder;
 use plotters::series::LineSeries;
 use plotters::style::{BLUE, CYAN, GREEN, MAGENTA, RED, RGBColor};
@@ -55,14 +55,14 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
         let window = ChartWindow::TenSeconds.as_nanos();
         let points = ecg_series.last_duration(window);
         
-        let (min_time, _) = ecg_series.display_time_range(window);
+        let (_, max_time) = ecg_series.display_time_range(window);
         
         let mut chart = builder
             .margin(15)
             .caption("ECG Signal", ("sans-serif", 20))
             .x_label_area_size(30)
             .y_label_area_size(40)
-            .build_cartesian_2d(0.0..CHART_TIME_WINDOW_SECONDS, ECG_MIN_UV..ECG_MAX_UV)
+            .build_cartesian_2d(-CHART_TIME_WINDOW_SECONDS..0.0, ECG_MIN_UV..ECG_MAX_UV)
             .expect("Failed to build chart");
 
         chart.plotting_area().fill(&RGBColor(245, 245, 240)).expect("Failed to fill background");
@@ -76,7 +76,7 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &RED,
@@ -95,14 +95,14 @@ impl<'a> Chart<Message> for HrChartType<'a> {
         let window = ChartWindow::TenSeconds.as_nanos();
         let points = hr_series.last_duration(window);
         
-        let (min_time, _) = hr_series.display_time_range(window);
+        let (_, max_time) = hr_series.display_time_range(window);
 
         let mut chart = builder
             .margin(15)
             .caption("Heart Rate", ("sans-serif", 20))
             .x_label_area_size(30)
             .y_label_area_size(40)
-            .build_cartesian_2d(0.0..CHART_TIME_WINDOW_SECONDS, HR_MIN_BPM..HR_MAX_BPM)
+            .build_cartesian_2d(-CHART_TIME_WINDOW_SECONDS..0.0, HR_MIN_BPM..HR_MAX_BPM)
             .expect("Failed to build chart");
 
         chart.plotting_area().fill(&RGBColor(245, 245, 240)).expect("Failed to fill background");
@@ -116,7 +116,7 @@ impl<'a> Chart<Message> for HrChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &RED,
@@ -134,19 +134,15 @@ impl<'a> Chart<Message> for RrChartType<'a> {
         // Show last 10 seconds of RR data
         let window = ChartWindow::TenSeconds.as_nanos();
         let points = rr_series.last_duration(window);
-        let rmssd = points.rmssd();
         
-        let (min_time, _) = rr_series.display_time_range(window);
+        let (_, max_time) = rr_series.display_time_range(window);
 
         let mut chart = builder
             .margin(15)
-            .caption(
-                format!("RR Interval, RMSSD: {:.2} ms", rmssd),
-                ("sans-serif", 20),
-            )
+            .caption("RR Interval", ("sans-serif", 20))
             .x_label_area_size(30)
             .y_label_area_size(40)
-            .build_cartesian_2d(0.0..CHART_TIME_WINDOW_SECONDS, RR_MIN_MS..RR_MAX_MS)
+            .build_cartesian_2d(-CHART_TIME_WINDOW_SECONDS..0.0, RR_MIN_MS..RR_MAX_MS)
             .expect("Failed to build chart");
 
         chart.plotting_area().fill(&RGBColor(245, 245, 240)).expect("Failed to fill background");
@@ -160,7 +156,7 @@ impl<'a> Chart<Message> for RrChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &BLUE,
@@ -179,14 +175,14 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
         let window = ChartWindow::TenSeconds.as_nanos();
         let points = hrv_series.last_duration(window);
         
-        let (min_time, _) = hrv_series.display_time_range(window);
+        let (_, max_time) = hrv_series.display_time_range(window);
 
         let mut chart = builder
             .margin(15)
             .caption("HRV (RMSSD)", ("sans-serif", 20))
             .x_label_area_size(30)
             .y_label_area_size(40)
-            .build_cartesian_2d(0.0..CHART_TIME_WINDOW_SECONDS, HRV_MIN_MS..HRV_MAX_MS)
+            .build_cartesian_2d(-CHART_TIME_WINDOW_SECONDS..0.0, HRV_MIN_MS..HRV_MAX_MS)
             .expect("Failed to build chart");
 
         chart.plotting_area().fill(&RGBColor(245, 245, 240)).expect("Failed to fill background");
@@ -200,7 +196,7 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &GREEN,
@@ -225,14 +221,14 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         let acc_z_series = &self.state.channels.acc_z;
         let z_points = acc_z_series.last_duration(window);
 
-        let (min_time, _) = acc_x_series.display_time_range(window);
+        let (_, max_time) = acc_x_series.display_time_range(window);
 
         let mut chart = builder
             .margin(15)
             .caption("Acceleration", ("sans-serif", 20))
             .x_label_area_size(30)
             .y_label_area_size(40)
-            .build_cartesian_2d(0.0..CHART_TIME_WINDOW_SECONDS, ACC_MIN_MG..ACC_MAX_MG)
+            .build_cartesian_2d(-CHART_TIME_WINDOW_SECONDS..0.0, ACC_MIN_MG..ACC_MAX_MG)
             .expect("Failed to build chart");
 
         chart.plotting_area().fill(&RGBColor(245, 245, 240)).expect("Failed to fill background");
@@ -246,7 +242,7 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 x_points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &GREEN,
@@ -256,7 +252,7 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 y_points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &MAGENTA,
@@ -266,7 +262,7 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 z_points.iter().map(|p| {
-                    let time_sec = (p.time - min_time) as f64 / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &CYAN,
