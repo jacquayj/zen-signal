@@ -1,10 +1,21 @@
-use arctic::PmdData;
-
-// Sample rates configured for Polar H10 device
-// Note: These should match the rates configured via polar.ecg_sample_rate() and polar.acc_sample_rate()
-// The actual rate is queried from the device and set to maximum in sensor.rs
-const ECG_SAMPLE_RATE_HZ: u64 = 130; // Default ECG sampling rate in Hz (can be configured)
-const ACC_SAMPLE_RATE_HZ: u64 = 200; // Default accelerometer sampling rate in Hz
+//! # Time Series Data Storage Module
+//!
+//! Generic time series storage and query utilities for timestamped data.
+//! Provides efficient storage, retrieval, and statistical operations on
+//! sequential data points without any sensor-specific logic.
+//!
+//! ## Key Types
+//! - `Point`: Individual timestamped data point (time in nanoseconds, integer value)
+//! - `TimeSeries`: Vector-based storage with query methods
+//! - `PointSliceExt`: Statistical operations on point slices (min/max, RMSSD)
+//!
+//! ## Architecture
+//! TimeSeries maintains sorted points and provides efficient time-windowed queries
+//! using binary search. Query methods return slices when possible to avoid allocation.
+//!
+//! ## Usage
+//! For sensor-specific data handling, see `polar_data` module.
+//! For visualization helpers, see `visualization` module.
 
 // Nanoseconds in one second
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
@@ -55,233 +66,20 @@ impl ChartWindow {
     }
 }
 
-pub struct Channels {
-    pub ecg: TimeSeries,
-    pub acc_x: TimeSeries,
-    pub acc_y: TimeSeries,
-    pub acc_z: TimeSeries,
-    pub hr: TimeSeries,
-    pub rr: TimeSeries,
-    pub hrv: TimeSeries, // RMSSD over time
-}
-
-impl Channels {
-    pub fn new() -> Self {
-        Self {
-            ecg: TimeSeries::new(ECG_SAMPLE_RATE_HZ),
-            acc_x: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
-            acc_y: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
-            acc_z: TimeSeries::new(ACC_SAMPLE_RATE_HZ),
-            hr: TimeSeries::new(1), // HR doesn't use sample rate for time calculations
-            rr: TimeSeries::new(1), // RR doesn't use sample rate for time calculations
-            hrv: TimeSeries::new(1), // HRV (RMSSD) calculated periodically
-        }
-    }
-
-    pub fn set_ecg_sample_rate(&mut self, rate: u64) {
-        self.ecg.set_sample_rate(rate);
-    }
-
-    pub fn set_acc_sample_rate(&mut self, rate: u64) {
-        self.acc_x.set_sample_rate(rate);
-        self.acc_y.set_sample_rate(rate);
-        self.acc_z.set_sample_rate(rate);
-    }
-
-    pub fn handle_heart_rate(&mut self, hr: arctic::HeartRate) {
-        // Use current system time as approximate timestamp for HR
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-
-        self.hr.add_point(now, (*hr.bpm()).into());
-
-        println!("Heart rate: {:?}", hr);
-
-        let rr = hr.rr().clone().unwrap_or(vec![]);
-        let rr_len = rr.len();
-
-        // Handle RR intervals - each interval is a separate data point
-        // RR intervals are the time between beats in milliseconds
-        if rr_len == 0 {
-            // If no RR data, repeat last value to maintain continuity
-            if let Some(last) = self.rr.data.last() {
-                self.rr.add_point(now, last.value);
-            }
-        } else {
-            // Add each RR interval as a separate point
-            // Space them out evenly within the time since last measurement
-            let time_spacing = if let Some(last) = self.rr.data.last() {
-                (now - last.time) / rr_len as u64
-            } else {
-                1_000_000_000 // 1 second default spacing
-            };
-
-            for (i, &rr_value) in rr.iter().enumerate() {
-                let t = now - ((rr_len - i - 1) as u64 * time_spacing);
-                self.rr.add_point(t, rr_value as i32);
-            }
-            
-            // Calculate and store HRV (RMSSD) from recent RR intervals
-            // Use last 30 seconds of data for rolling RMSSD calculation
-            const THIRTY_SECONDS_NS: u64 = 30_000_000_000;
-            let recent_rr = self.rr.last_duration(THIRTY_SECONDS_NS);
-            
-            if recent_rr.len() >= 2 {
-                let rmssd = recent_rr.rmssd();
-                // Store RMSSD value as integer (rounded)
-                self.hrv.add_point(now, rmssd as i32);
-            }
-        }
-    }
-
-    pub fn handle_measurement_data(&mut self, data: arctic::PmdRead) {
-        // Use system time as the reference point for this batch
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-        
-        let data_vec = data.data();
-        
-        // Count samples by type to properly timestamp each channel
-        let mut ecg_count = 0u64;
-        let mut acc_count = 0u64;
-        for d in data_vec.iter() {
-            match d {
-                PmdData::Ecg(_) => ecg_count += 1,
-                PmdData::Acc(_) => acc_count += 1,
-            }
-        }
-        
-        // Determine the starting timestamp for each data type
-        // Use the last timestamp + 1 sample interval, or fall back to calculating from 'now'
-        let ecg_timestep = NANOS_PER_SECOND / self.ecg.sample_rate();
-        let acc_timestep = NANOS_PER_SECOND / self.acc_x.sample_rate();
-        
-        let ecg_start_time = if let Some(last_point) = self.ecg.data.last() {
-            // Continue from last timestamp + one interval
-            last_point.time + ecg_timestep
-        } else if ecg_count > 0 {
-            // First batch: spread backwards from now
-            now.saturating_sub((ecg_count - 1) * ecg_timestep)
-        } else {
-            // No ECG samples in this batch
-            now
-        };
-        
-        let acc_start_time = if let Some(last_point) = self.acc_x.data.last() {
-            // Continue from last timestamp + one interval
-            last_point.time + acc_timestep
-        } else if acc_count > 0 {
-            // First batch: spread backwards from now
-            now.saturating_sub((acc_count - 1) * acc_timestep)
-        } else {
-            // No ACC samples in this batch
-            now
-        };
-        
-        // Track indices per data type
-        let mut ecg_idx = 0u64;
-        let mut acc_idx = 0u64;
-
-        for d in data_vec.iter() {
-            match d {
-                PmdData::Acc(acc) => {
-                    // Calculate timestamp as start_time + (index * timestep)
-                    let t = acc_start_time + (acc_idx * acc_timestep);
-
-                    let acc = acc.data();
-                    self.acc_x.add_point(t, acc.0);
-                    self.acc_y.add_point(t, acc.1);
-                    self.acc_z.add_point(t, acc.2);
-                    
-                    acc_idx += 1;
-                }
-                PmdData::Ecg(ecg) => {
-                    // Calculate timestamp as start_time + (index * timestep)
-                    let t = ecg_start_time + (ecg_idx * ecg_timestep);
-                    
-                    self.ecg.add_point(t, *ecg.val());
-                    
-                    ecg_idx += 1;
-                }
-            }
-        }
-    }
-}
-
+/// Individual timestamped data point
 pub struct Point {
-    pub time: u64,
-    pub value: i32,
+    pub time: u64,   // Timestamp in nanoseconds
+    pub value: i32,  // Integer value
 }
 
-pub struct TimeSeries {
-    data: Vec<Point>,
-    sample_rate: u64, // Sample rate in Hz (nominal, for calculating expected intervals)
-    start_time: Option<u64>, // First timestamp in nanoseconds
-}
-
-impl TimeSeries {
-    /// Calculate expected time interval between samples in nanoseconds
-    fn expected_interval_ns(&self) -> u64 {
-        if self.sample_rate == 0 {
-            return 0;
-        }
-        NANOS_PER_SECOND / self.sample_rate
-    }
-
-    /// Check if there's a gap between the last point and a new timestamp
-    /// Returns true if the gap is larger than 1.5x the expected interval
-    pub fn has_gap(&self, new_timestamp: u64) -> bool {
-        if let Some(last) = self.data.last() {
-            let expected = self.expected_interval_ns();
-            if expected > 0 {
-                let actual_gap = new_timestamp.saturating_sub(last.time);
-                return actual_gap > expected + (expected / 2);
-            }
-        }
-        false
-    }
-
-    /// Get the number of samples that appear to be missing before this timestamp
-    pub fn missing_samples(&self, new_timestamp: u64) -> usize {
-        if let Some(last) = self.data.last() {
-            let expected = self.expected_interval_ns();
-            if expected > 0 {
-                let actual_gap = new_timestamp.saturating_sub(last.time);
-                let expected_samples = (actual_gap / expected) as usize;
-                return expected_samples.saturating_sub(1);
-            }
-        }
-        0
-    }
-}
-
+/// Trait for statistical operations on point slices
 pub trait PointSliceExt {
-    fn min_max_time(&self) -> Option<(u64, u64)>;
-    fn min_max_value(&self) -> Option<(i32, i32)>;
     fn rmssd(&self) -> f64;
 }
 
 // Implement the trait for a slice of `Point`
 impl PointSliceExt for &[Point] {
-    fn min_max_time(&self) -> Option<(u64, u64)> {
-        self.iter().fold(None, |acc, point| match acc {
-            None => Some((point.time, point.time)),
-            Some((min, max)) => Some((min.min(point.time), max.max(point.time))),
-        })
-    }
-
-    fn min_max_value(&self) -> Option<(i32, i32)> {
-        self.iter().fold(None, |acc, point| match acc {
-            None => Some((point.value, point.value)),
-            Some((min, max)) => Some((min.min(point.value), max.max(point.value))),
-        })
-    }
-
-    // RMSSD
+    // RMSSD (Root Mean Square of Successive Differences)
     fn rmssd(&self) -> f64 {
         let mut sum = 0.0;
         let mut count = 0;
@@ -292,6 +90,13 @@ impl PointSliceExt for &[Point] {
         }
         (sum / count as f64).sqrt()
     }
+}
+
+/// Time series storage with efficient queries
+pub struct TimeSeries {
+    data: Vec<Point>,
+    sample_rate: u64, // Sample rate in Hz (nominal, for calculating expected intervals)
+    start_time: Option<u64>, // First timestamp in nanoseconds
 }
 
 impl TimeSeries {
@@ -320,6 +125,36 @@ impl TimeSeries {
         self.data.push(Point { time, value });
     }
 
+    /// Check if time series is empty
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Get number of points
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Get the last point if it exists
+    pub fn last_point(&self) -> Option<&Point> {
+        self.data.last()
+    }
+
+    /// Binary search for first point >= target time
+    pub fn partition_point_time(&self, target_time: u64) -> usize {
+        self.data.partition_point(|p| p.time < target_time)
+    }
+
+    /// Binary search for first point > target time
+    pub fn partition_point_time_inclusive(&self, target_time: u64) -> usize {
+        self.data.partition_point(|p| p.time <= target_time)
+    }
+
+    /// Get a slice of the internal data
+    pub fn slice(&self, start_idx: usize, end_idx: usize) -> &[Point] {
+        &self.data[start_idx..end_idx]
+    }
+
     pub fn last_points(&self, n: usize) -> &[Point] {
         &self.data[self.data.len().saturating_sub(n)..]
     }
@@ -338,18 +173,6 @@ impl TimeSeries {
         let start_idx = self.data.partition_point(|p| p.time < cutoff_time);
         
         &self.data[start_idx..]
-    }
-
-    /// Get the time range that should be displayed for a given duration window
-    /// This ensures the time axis is fixed and data appears from right to left
-    pub fn display_time_range(&self, duration_ns: u64) -> (u64, u64) {
-        if self.data.is_empty() {
-            return (0, duration_ns);
-        }
-
-        let latest_time = self.data.last().unwrap().time;
-        let start_time = latest_time.saturating_sub(duration_ns);
-        (start_time, latest_time)
     }
 
     /// Get the current display reference time with optional smooth scrolling delay
@@ -429,140 +252,94 @@ impl TimeSeries {
             value: p.value,
         }).collect()
     }
+}
 
-    /// Get points with linear interpolation for smooth curves
-    /// Adds interpolated points between actual data points to create smoother lines
-    /// target_interval_ns: desired time between interpolated points (e.g., 100ms = 100_000_000ns)
-    /// interpolate_end: if true, interpolates at end_time; if false, only interpolates at start_time
-    pub fn range_from_time_interpolated(&self, end_time: u64, duration_ns: u64, target_interval_ns: u64, interpolate_end: bool) -> Vec<Point> {
-        if self.data.is_empty() {
-            return Vec::new();
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let start_time = end_time.saturating_sub(duration_ns);
+    #[test]
+    fn test_timeseries_add_point() {
+        let mut ts = TimeSeries::new(100);
+        ts.add_point(1000, 42);
+        ts.add_point(2000, 84);
         
-        // Find first point >= start_time (or the point just before for interpolation)
-        let start_idx = self.data.partition_point(|p| p.time < start_time);
+        assert_eq!(ts.len(), 2);
+        assert_eq!(ts.last_point().unwrap().value, 84);
+    }
+
+    #[test]
+    fn test_timeseries_last_points() {
+        let mut ts = TimeSeries::new(100);
+        ts.add_point(1000, 1);
+        ts.add_point(2000, 2);
+        ts.add_point(3000, 3);
         
-        // Find first point > end_time (or include one after for forward interpolation)
-        let end_idx = self.data.partition_point(|p| p.time <= end_time);
+        let last = ts.last_points(2);
+        assert_eq!(last.len(), 2);
+        assert_eq!(last[0].value, 2);
+        assert_eq!(last[1].value, 3);
+    }
+
+    #[test]
+    fn test_timeseries_last_duration() {
+        let mut ts = TimeSeries::new(100);
+        ts.add_point(1_000_000_000, 1);
+        ts.add_point(2_000_000_000, 2);
+        ts.add_point(3_000_000_000, 3);
+        ts.add_point(4_000_000_000, 4);
         
-        // Get points including one before the window and one after for interpolation
-        let actual_start_idx = if start_idx > 0 { start_idx - 1 } else { start_idx };
-        let actual_end_idx = (end_idx + 1).min(self.data.len());
-        let points_for_interp = &self.data[actual_start_idx..actual_end_idx];
+        // Get last 2 seconds worth of data
+        // From time 4s back to 2s (inclusive) = points at 2s, 3s, 4s
+        let recent = ts.last_duration(2_000_000_000);
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].value, 2);
+        assert_eq!(recent[1].value, 3);
+        assert_eq!(recent[2].value, 4);
+    }
+
+    #[test]
+    fn test_rmssd_calculation() {
+        let points = vec![
+            Point { time: 1000, value: 800 },
+            Point { time: 2000, value: 820 },
+            Point { time: 3000, value: 810 },
+            Point { time: 4000, value: 830 },
+        ];
         
-        if points_for_interp.len() < 2 {
-            // Not enough points to interpolate, just return what we have
-            return self.range_from_time_with_fill(end_time, duration_ns);
-        }
+        let rmssd = points.as_slice().rmssd();
+        // RMSSD = sqrt(mean of squared differences)
+        // Differences: 20, -10, 20
+        // Squared: 400, 100, 400
+        // Mean: 300
+        // sqrt(300) ≈ 17.32
+        assert!((rmssd - 17.32).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_set_sample_rate() {
+        let mut ts = TimeSeries::new(100);
+        assert_eq!(ts.sample_rate(), 100);
         
-        let mut result = Vec::new();
+        ts.set_sample_rate(200);
+        assert_eq!(ts.sample_rate(), 200);
+    }
+
+    #[test]
+    fn test_range_from_time() {
+        let mut ts = TimeSeries::new(100);
+        ts.add_point(1_000_000_000, 1);
+        ts.add_point(2_000_000_000, 2);
+        ts.add_point(3_000_000_000, 3);
+        ts.add_point(4_000_000_000, 4);
+        ts.add_point(5_000_000_000, 5);
         
-        // ALWAYS add an exact point at start_time by interpolating
-        let first_in_window = points_for_interp.iter().position(|p| p.time >= start_time).unwrap_or(0);
-        if first_in_window > 0 {
-            let p1 = &points_for_interp[first_in_window - 1];
-            let p2 = &points_for_interp[first_in_window];
-            
-            if p1.time <= start_time && p2.time >= start_time {
-                let time_diff = p2.time - p1.time;
-                let value_diff = p2.value - p1.value;
-                let time_from_p1 = start_time - p1.time;
-                let progress = time_from_p1 as f64 / time_diff as f64;
-                let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
-                
-                result.push(Point {
-                    time: start_time,
-                    value: interpolated_value.round() as i32,
-                });
-            }
-        }
+        // Get points from 2s to 4s
+        let range = ts.range_from_time(4_000_000_000, 2_000_000_000);
         
-        // Interpolate between each pair of consecutive points
-        for window in points_for_interp.windows(2) {
-            let p1 = &window[0];
-            let p2 = &window[1];
-            
-            let time_diff = p2.time.saturating_sub(p1.time);
-            let value_diff = p2.value - p1.value;
-            
-            // Calculate number of interpolated points needed
-            let num_steps = (time_diff / target_interval_ns).max(1);
-            
-            // Add interpolated points
-            for step in 0..num_steps {
-                let t = p1.time + (time_diff * step / num_steps);
-                
-                // Only add points within the display window (but not the exact boundaries - we handle those separately)
-                if t > start_time && t < end_time {
-                    let progress = step as f64 / num_steps as f64;
-                    let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
-                    
-                    result.push(Point {
-                        time: t,
-                        value: interpolated_value.round() as i32,
-                    });
-                }
-            }
-        }
-        
-        // Add actual points that fall within the window (excluding boundaries)
-        for point in points_for_interp {
-            if point.time > start_time && point.time < end_time {
-                result.push(Point {
-                    time: point.time,
-                    value: point.value,
-                });
-            }
-        }
-        
-        // Conditionally add an exact point at end_time by forward-interpolating
-        if interpolate_end {
-            let last_before_end = points_for_interp.iter().rposition(|p| p.time <= end_time).unwrap_or(points_for_interp.len() - 1);
-            if last_before_end + 1 < points_for_interp.len() {
-                let p1 = &points_for_interp[last_before_end];
-                let p2 = &points_for_interp[last_before_end + 1];
-                
-                if p1.time <= end_time && p2.time >= end_time {
-                    let time_diff = p2.time - p1.time;
-                    let value_diff = p2.value - p1.value;
-                    let time_from_p1 = end_time - p1.time;
-                    let progress = time_from_p1 as f64 / time_diff as f64;
-                    let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
-                    
-                    result.push(Point {
-                        time: end_time,
-                        value: interpolated_value.round() as i32,
-                    });
-                }
-            } else if points_for_interp.len() >= 2 {
-                // Forward extrapolate from last two points
-                let p1 = &points_for_interp[points_for_interp.len() - 2];
-                let p2 = &points_for_interp[points_for_interp.len() - 1];
-                
-                if p2.time < end_time {
-                    let time_diff = p2.time - p1.time;
-                    let value_diff = p2.value - p1.value;
-                    let time_from_p2 = end_time - p2.time;
-                    
-                    // Only extrapolate if gap is reasonable
-                    if time_diff > 0 && time_from_p2 <= time_diff * 3 {
-                        let progress = time_from_p2 as f64 / time_diff as f64;
-                        let interpolated_value = p2.value as f64 + (value_diff as f64 * progress);
-                        
-                        result.push(Point {
-                            time: end_time,
-                            value: interpolated_value.round() as i32,
-                        });
-                    }
-                }
-            }
-        }
-        
-        // Sort by time since we added points out of order
-        result.sort_by_key(|p| p.time);
-        
-        result
+        assert_eq!(range.len(), 3);
+        assert_eq!(range[0].value, 2);
+        assert_eq!(range[1].value, 3);
+        assert_eq!(range[2].value, 4);
     }
 }

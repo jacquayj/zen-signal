@@ -1,5 +1,6 @@
 use crate::app::{Message, ZenSignal};
 use crate::timeseries::{ChartWindow, TimeUnit};
+use crate::visualization::range_from_time_interpolated;
 use plotters::chart::ChartBuilder;
 use plotters::series::LineSeries;
 use plotters::style::{BLUE, CYAN, GREEN, MAGENTA, RED, RGBColor};
@@ -101,7 +102,7 @@ impl<'a> Chart<Message> for HrChartType<'a> {
         let display_time = TimeSeries::current_display_time(smooth_streaming);
         
         // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
-        let points = hr_series.range_from_time_interpolated(display_time, window, 100_000_000, smooth_streaming);
+        let points = range_from_time_interpolated(hr_series, display_time, window, 100_000_000, smooth_streaming);
 
         let mut chart = builder
             .margin(15)
@@ -145,7 +146,7 @@ impl<'a> Chart<Message> for RrChartType<'a> {
         let display_time = TimeSeries::current_display_time(smooth_streaming);
         
         // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
-        let points = rr_series.range_from_time_interpolated(display_time, window, 100_000_000, smooth_streaming);
+        let points = range_from_time_interpolated(rr_series, display_time, window, 100_000_000, smooth_streaming);
 
         let mut chart = builder
             .margin(15)
@@ -189,7 +190,7 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
         let display_time = TimeSeries::current_display_time(smooth_streaming);
         
         // Always use interpolation, but only interpolate at the end when smooth streaming is enabled
-        let points = hrv_series.range_from_time_interpolated(display_time, window, 100_000_000, smooth_streaming);
+        let points = range_from_time_interpolated(hrv_series, display_time, window, 100_000_000, smooth_streaming);
 
         let mut chart = builder
             .margin(15)

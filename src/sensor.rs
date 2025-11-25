@@ -1,3 +1,30 @@
+//! # Sensor Communication Module
+//!
+//! Manages connection and data streaming from Polar H10 heart rate sensors
+//! using the Arctic library for Bluetooth Low Energy communication.
+//!
+//! ## Key Components
+//! - `Handler`: Event handler that forwards sensor data to UI thread
+//! - `SensorUpdate`: Messages sent from sensor to UI
+//! - `ConnectionStatus`: Connection lifecycle events
+//! - `start_data_collection()`: Main async function orchestrating data flow
+//!
+//! ## Connection Lifecycle
+//! 1. Create PolarSensor instance
+//! 2. Attempt connection with retry logic
+//! 3. Subscribe to notification streams (HR, PMD)
+//! 4. Configure data types (ECG, Accelerometer)
+//! 5. Query and set maximum sample rates
+//! 6. Run event loop with cancellation support
+//!
+//! ## Why Separate Thread
+//! Sensor operations are async and potentially blocking. Running in a separate
+//! thread with its own Tokio runtime prevents blocking the UI thread.
+//!
+//! ## Graceful Disconnection
+//! Uses AtomicBool stop flag with tokio::select! to allow clean cancellation
+//! of the event loop without forcefully terminating the async task.
+
 use arctic::{self, PolarSensor};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -37,13 +64,13 @@ impl Handler {
 impl arctic::EventHandler for Handler {
     async fn heart_rate_update(&self, _ctx: &arctic::PolarSensor, heartrate: arctic::HeartRate) {
         if let Err(why) = self.sender.send(SensorUpdate::HeartRate(heartrate)) {
-            println!("Could not send heart rate data: {:?}", why);
+            log::error!("Could not send heart rate data: {:?}", why);
         }
     }
 
     async fn measurement_update(&self, _ctx: &arctic::PolarSensor, data: arctic::PmdRead) {
         if let Err(why) = self.sender.send(SensorUpdate::MeasurementData(data)) {
-            println!("Could not send heart rate data: {:?}", why);
+            log::error!("Could not send measurement data: {:?}", why);
         }
     }
 }
@@ -52,44 +79,44 @@ async fn connect_to_device(
     polar: &mut PolarSensor,
     handler: &Handler,
     should_stop: &Arc<AtomicBool>,
-) -> Result<(), ()> {
-    print!("Connecting");
+) -> Result<(), crate::error::ConnectionError> {
+    log::info!("Connecting...");
     while !polar.is_connected().await {
         if should_stop.load(Ordering::Relaxed) {
             let _ = handler.sender.send(SensorUpdate::ConnectionStatus(ConnectionStatus::Disconnected));
-            return Err(());
+            return Err(crate::error::ConnectionError::Interrupted);
         }
         
-        print!(".");
+        log::debug!("Connection attempt...");
         match polar.connect().await {
             Err(arctic::Error::NoBleAdaptor) => {
-                println!("No bluetooth adapter found");
+                log::error!("No bluetooth adapter found");
                 let _ = handler.sender.send(SensorUpdate::ConnectionStatus(
                     ConnectionStatus::Error("No bluetooth adapter found".to_string())
                 ));
-                return Err(());
+                return Err(crate::error::ConnectionError::NoAdapter);
             }
             Err(why) => {
-                println!("Could not connect: {:?}", why);
+                log::warn!("Could not connect: {:?}", why);
                 if should_stop.load(Ordering::Relaxed) {
                     let _ = handler.sender.send(SensorUpdate::ConnectionStatus(ConnectionStatus::Disconnected));
-                    return Err(());
+                    return Err(crate::error::ConnectionError::Interrupted);
                 }
             }
             _ => {}
         }
     }
-    println!("Connected");
+    log::info!("Connected successfully");
     let _ = handler.sender.send(SensorUpdate::ConnectionStatus(ConnectionStatus::Connected));
     Ok(())
 }
 
 async fn subscribe_to_streams(polar: &mut PolarSensor) {
     if let Err(why) = polar.subscribe(arctic::NotifyStream::HeartRate).await {
-        println!("Could not subscribe to heart rate notifications: {:?}", why)
+        log::error!("Could not subscribe to heart rate notifications: {:?}", why)
     }
     if let Err(why) = polar.subscribe(arctic::NotifyStream::MeasurementData).await {
-        println!("Could not subscribe to measurement data notifications: {:?}", why)
+        log::error!("Could not subscribe to measurement data notifications: {:?}", why)
     }
 }
 
@@ -110,10 +137,10 @@ async fn configure_sample_rates(polar: &mut PolarSensor) -> (u64, u64) {
                         let sample_rates = setting.sample_rate();
                         if !sample_rates.is_empty() {
                             if let Some(&max_rate) = sample_rates.iter().max() {
-                                println!("Available ECG sample rates: {:?}", sample_rates);
-                                println!("Setting ECG sample rate to maximum: {} Hz", max_rate);
+                                log::debug!("Available ECG sample rates: {:?}", sample_rates);
+                                log::info!("Setting ECG sample rate to maximum: {} Hz", max_rate);
                                 if let Err(e) = polar.ecg_sample_rate(max_rate) {
-                                    println!("Failed to set ECG sample rate: {:?}", e);
+                                    log::error!("Failed to set ECG sample rate: {:?}", e);
                                 } else {
                                     configured_ecg_rate = max_rate as u64;
                                 }
@@ -124,10 +151,10 @@ async fn configure_sample_rates(polar: &mut PolarSensor) -> (u64, u64) {
                         let sample_rates = setting.sample_rate();
                         if !sample_rates.is_empty() {
                             if let Some(&max_rate) = sample_rates.iter().max() {
-                                println!("Available ACC sample rates: {:?}", sample_rates);
-                                println!("Setting ACC sample rate to maximum: {} Hz", max_rate);
+                                log::debug!("Available ACC sample rates: {:?}", sample_rates);
+                                log::info!("Setting ACC sample rate to maximum: {} Hz", max_rate);
                                 if let Err(e) = polar.acc_sample_rate(max_rate) {
-                                    println!("Failed to set ACC sample rate: {:?}", e);
+                                    log::error!("Failed to set ACC sample rate: {:?}", e);
                                 } else {
                                     configured_acc_rate = max_rate as u64;
                                 }
@@ -138,7 +165,7 @@ async fn configure_sample_rates(polar: &mut PolarSensor) -> (u64, u64) {
             }
         }
         Err(e) => {
-            println!("Could not query device settings: {:?}", e);
+            log::error!("Could not query device settings: {:?}", e);
         }
     }
     
@@ -152,13 +179,13 @@ async fn run_event_loop(
 ) {
     tokio::select! {
         result = polar.event_loop() => {
-            println!("Event loop ended: {:?}", result);
+            log::info!("Event loop ended: {:?}", result);
             let _ = handler.sender.send(SensorUpdate::ConnectionStatus(ConnectionStatus::Disconnected));
         }
         _ = async {
             loop {
                 if should_stop.load(Ordering::Relaxed) {
-                    println!("Disconnecting...");
+                    log::info!("Disconnecting...");
                     break;
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -174,7 +201,7 @@ pub async fn start_data_collection(
     handler: Handler,
     should_stop: Arc<AtomicBool>,
 ) {
-    println!("Attempting connection");
+    log::info!("Attempting connection");
     let _ = handler.sender.send(SensorUpdate::ConnectionStatus(ConnectionStatus::Connecting));
 
     {

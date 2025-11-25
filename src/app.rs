@@ -1,18 +1,43 @@
+//! # Application State and UI Module
+//!
+//! Main application logic using the Iced GUI framework. Manages application state,
+//! processes user interactions, and orchestrates the UI layout.
+//!
+//! ## Architecture
+//! Follows Elm architecture:
+//! - `ZenSignal`: Application state
+//! - `Message`: User interactions and events
+//! - `update()`: State transitions
+//! - `view()`: UI rendering
+//! - `subscription()`: Time-based updates
+//!
+//! ## Key State
+//! - Connection state (disconnected, scanning, connecting, connected)
+//! - Available and selected Bluetooth devices
+//! - Sensor data channels (ECG, HR, RR, HRV, ACC)
+//! - Configuration settings
+//!
+//! ## Data Flow
+//! Sensor data arrives via mpsc channel from connection thread.
+//! Connection commands are sent via separate mpsc channel.
+//! UI updates at 60Hz (16ms intervals) to process pending sensor data.
+//!
+//! ## Why Manual Disconnect Flag
+//! Prevents autoconnect from immediately reconnecting after user explicitly
+//! disconnects. Reset when autoconnect is re-enabled or manually connecting.
+
 use crate::charts::{AccChartType, EcgChartType, HrChartType, HrvChartType, RrChartType};
 use crate::config::Config;
+use crate::connection::ConnectionCommand;
 use crate::device_scanner::{scan_devices, BluetoothDevice};
+use crate::error::ScanError;
 use crate::sensor::SensorUpdate;
-use crate::timeseries::Channels;
+use crate::polar_data::Channels;
+use crate::ui::styles;
 use iced::widget::{button, checkbox, column, container, row, scrollable, text, vertical_space};
 use iced::{Element, Length, Subscription, Task};
 use plotters_iced::ChartWidget;
 use std::sync::mpsc::Receiver;
-
-#[derive(Debug, Clone)]
-pub enum ConnectionCommand {
-    Connect(String),
-    Disconnect,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionState {
@@ -38,7 +63,7 @@ pub struct ZenSignal {
 pub enum Message {
     Tick,
     ScanDevices,
-    DevicesScanned(Result<Vec<BluetoothDevice>, String>),
+    DevicesScanned(Result<Vec<BluetoothDevice>, ScanError>),
     SelectDevice(BluetoothDevice),
     ConnectDevice,
     DisconnectDevice,
@@ -51,7 +76,10 @@ impl ZenSignal {
         receiver: Receiver<SensorUpdate>,
         connect_sender: std::sync::mpsc::Sender<ConnectionCommand>,
     ) -> (Self, Task<Message>) {
-        let config = Config::load();
+        let config = Config::load().unwrap_or_else(|e| {
+            log::error!("Failed to load config: {}, using defaults", e);
+            Config::default()
+        });
         let should_autoconnect = config.enable_autoconnect;
         
         (
@@ -95,7 +123,7 @@ impl ZenSignal {
                                             self.channels = Channels::new();
                                         }
                                         ConnectionStatus::Error(e) => {
-                                            println!("Connection error: {}", e);
+                                            log::error!("Connection error: {}", e);
                                             self.connection_state = ConnectionState::Disconnected;
                                         }
                                     }
@@ -107,7 +135,7 @@ impl ZenSignal {
                                     self.channels.handle_measurement_data(data);
                                 }
                                 SensorUpdate::SampleRateConfig { ecg_rate, acc_rate } => {
-                                    println!("Updating sample rates: ECG={} Hz, ACC={} Hz", ecg_rate, acc_rate);
+                                    log::info!("Updating sample rates: ECG={} Hz, ACC={} Hz", ecg_rate, acc_rate);
                                     self.channels.set_ecg_sample_rate(ecg_rate);
                                     self.channels.set_acc_sample_rate(acc_rate);
                                 }
@@ -136,7 +164,7 @@ impl ZenSignal {
                                 self.selected_device = Some(polar_device.clone());
                                 self.connection_state = ConnectionState::Connecting;
                                 if let Err(e) = self.connect_sender.send(ConnectionCommand::Connect(polar_device.id.clone())) {
-                                    println!("Failed to send autoconnect request: {}", e);
+                                    log::error!("Failed to send autoconnect request: {}", e);
                                     self.connection_state = ConnectionState::Disconnected;
                                 }
                             }
@@ -145,7 +173,7 @@ impl ZenSignal {
                         self.available_devices = devices;
                     }
                     Err(e) => {
-                        println!("Error scanning devices: {}", e);
+                        log::error!("Error scanning devices: {}", e);
                     }
                 }
                 Task::none()
@@ -158,19 +186,19 @@ impl ZenSignal {
                 if let Some(device) = &self.selected_device {
                     self.connection_state = ConnectionState::Connecting;
                     if let Err(e) = self.connect_sender.send(ConnectionCommand::Connect(device.id.clone())) {
-                        println!("Failed to send connection request: {}", e);
+                        log::error!("Failed to send connection request: {}", e);
                         self.connection_state = ConnectionState::Disconnected;
                     }
                 }
                 Task::none()
             }
             Message::DisconnectDevice => {
-                println!("UI: Sending disconnect command");
+                log::info!("Sending disconnect command");
                 self.manual_disconnect = true; // Mark as manual disconnect
                 if let Err(e) = self.connect_sender.send(ConnectionCommand::Disconnect) {
-                    println!("Failed to send disconnect request: {}", e);
+                    log::error!("Failed to send disconnect request: {}", e);
                 } else {
-                    println!("UI: Disconnect command sent successfully");
+                    log::debug!("Disconnect command sent successfully");
                 }
                 // State will be updated when we receive ConnectionStatus::Disconnected
                 Task::none()
@@ -178,7 +206,7 @@ impl ZenSignal {
             Message::ToggleAutoconnect(enabled) => {
                 self.config.enable_autoconnect = enabled;
                 if let Err(e) = self.config.save() {
-                    println!("Failed to save config: {}", e);
+                    log::error!("Failed to save config: {}", e);
                 }
                 
                 // If enabling autoconnect, reset manual disconnect flag and scan
@@ -194,7 +222,7 @@ impl ZenSignal {
             Message::ToggleSmoothStreaming(enabled) => {
                 self.config.smooth_data_streaming = enabled;
                 if let Err(e) = self.config.save() {
-                    println!("Failed to save config: {}", e);
+                    log::error!("Failed to save config: {}", e);
                 }
                 Task::none()
             }
@@ -264,99 +292,7 @@ impl ZenSignal {
                     )
                     .width(Length::Fill)
                     .padding(10)
-                    .style(move |_theme: &iced::Theme, status| {
-                        match status {
-                            button::Status::Active => {
-                                if is_selected {
-                                    // Selected: Teal/Cyan background
-                                    button::Style {
-                                        background: Some(iced::Background::Color(iced::Color::from_rgb(0.2, 0.6, 0.7))),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border {
-                                            color: iced::Color::from_rgb(0.3, 0.7, 0.8),
-                                            width: 2.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }
-                                } else {
-                                    // Unselected: Gray background
-                                    button::Style {
-                                        background: Some(iced::Background::Color(iced::Color::from_rgb(0.4, 0.4, 0.4))),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border {
-                                            color: iced::Color::from_rgb(0.5, 0.5, 0.5),
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }
-                                }
-                            }
-                            button::Status::Hovered => {
-                                if is_selected {
-                                    button::Style {
-                                        background: Some(iced::Background::Color(iced::Color::from_rgb(0.3, 0.7, 0.8))),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border {
-                                            color: iced::Color::from_rgb(0.4, 0.8, 0.9),
-                                            width: 2.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }
-                                } else {
-                                    button::Style {
-                                        background: Some(iced::Background::Color(iced::Color::from_rgb(0.5, 0.5, 0.5))),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border {
-                                            color: iced::Color::from_rgb(0.6, 0.6, 0.6),
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }
-                                }
-                            }
-                            button::Status::Pressed => {
-                                if is_selected {
-                                    button::Style {
-                                        background: Some(iced::Background::Color(iced::Color::from_rgb(0.15, 0.5, 0.6))),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border {
-                                            color: iced::Color::from_rgb(0.2, 0.6, 0.7),
-                                            width: 2.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }
-                                } else {
-                                    button::Style {
-                                        background: Some(iced::Background::Color(iced::Color::from_rgb(0.35, 0.35, 0.35))),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border {
-                                            color: iced::Color::from_rgb(0.45, 0.45, 0.45),
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }
-                                }
-                            }
-                            button::Status::Disabled => {
-                                button::Style {
-                                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.3, 0.3, 0.3))),
-                                    text_color: iced::Color::from_rgb(0.6, 0.6, 0.6),
-                                    border: iced::Border {
-                                        color: iced::Color::from_rgb(0.4, 0.4, 0.4),
-                                        width: 1.0,
-                                        radius: 4.0.into(),
-                                    },
-                                    ..Default::default()
-                                }
-                            }
-                        }
-                    })
+                    .style(styles::device_button_style(is_selected))
                     .into()
             });
 
@@ -369,41 +305,7 @@ impl ZenSignal {
                     .on_press(Message::DisconnectDevice)
                     .padding(10)
                     .width(Length::Fill)
-                    .style(|theme: &iced::Theme, status| {
-                        match status {
-                            button::Status::Active => button::Style {
-                                background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.2, 0.2))),
-                                text_color: iced::Color::WHITE,
-                                border: iced::Border {
-                                    color: iced::Color::from_rgb(0.9, 0.3, 0.3),
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                ..Default::default()
-                            },
-                            button::Status::Hovered => button::Style {
-                                background: Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.3, 0.3))),
-                                text_color: iced::Color::WHITE,
-                                border: iced::Border {
-                                    color: iced::Color::from_rgb(1.0, 0.4, 0.4),
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                ..Default::default()
-                            },
-                            button::Status::Pressed => button::Style {
-                                background: Some(iced::Background::Color(iced::Color::from_rgb(0.7, 0.15, 0.15))),
-                                text_color: iced::Color::WHITE,
-                                border: iced::Border {
-                                    color: iced::Color::from_rgb(0.8, 0.2, 0.2),
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                ..Default::default()
-                            },
-                            _ => button::primary(theme, status),
-                        }
-                    })
+                    .style(styles::disconnect_button_style())
             }
             ConnectionState::Connecting => {
                 button(text("Connecting..."))
@@ -416,41 +318,7 @@ impl ZenSignal {
                         .on_press(Message::ConnectDevice)
                         .padding(10)
                         .width(Length::Fill)
-                        .style(|theme: &iced::Theme, status| {
-                            match status {
-                                button::Status::Active => button::Style {
-                                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.2, 0.7, 0.2))),
-                                    text_color: iced::Color::WHITE,
-                                    border: iced::Border {
-                                        color: iced::Color::from_rgb(0.3, 0.8, 0.3),
-                                        width: 1.0,
-                                        radius: 4.0.into(),
-                                    },
-                                    ..Default::default()
-                                },
-                                button::Status::Hovered => button::Style {
-                                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.3, 0.8, 0.3))),
-                                    text_color: iced::Color::WHITE,
-                                    border: iced::Border {
-                                        color: iced::Color::from_rgb(0.4, 0.9, 0.4),
-                                        width: 1.0,
-                                        radius: 4.0.into(),
-                                    },
-                                    ..Default::default()
-                                },
-                                button::Status::Pressed => button::Style {
-                                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.15, 0.6, 0.15))),
-                                    text_color: iced::Color::WHITE,
-                                    border: iced::Border {
-                                        color: iced::Color::from_rgb(0.2, 0.7, 0.2),
-                                        width: 1.0,
-                                        radius: 4.0.into(),
-                                    },
-                                    ..Default::default()
-                                },
-                                _ => button::primary(theme, status),
-                            }
-                        })
+                        .style(styles::connect_button_style())
                 } else {
                     button(text("Select a device"))
                         .padding(10)
