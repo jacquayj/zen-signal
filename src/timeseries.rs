@@ -1,5 +1,12 @@
 use arctic::PmdData;
 
+// Sample rates configured in the arctic library for Polar H10 device
+const ECG_SAMPLE_RATE_HZ: u64 = 130; // ECG sampling rate in Hz (hardcoded in arctic/src/lib.rs)
+const ACC_SAMPLE_RATE_HZ: u64 = 200; // Accelerometer sampling rate in Hz (default in arctic)
+
+// Nanoseconds in one second
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+
 pub struct Channels {
     pub ecg: TimeSeries,
     pub acc_x: TimeSeries,
@@ -52,11 +59,10 @@ impl Channels {
         for (inx, d) in data.data().iter().enumerate() {
             match d {
                 PmdData::Acc(acc) => {
-                    // Magic number
-                    // I just increased the timestep until the graph looked good
-                    let acc_timestep = 1000000000 / 200;
+                    // Calculate time delta between samples based on configured sample rate
+                    let acc_timestep = NANOS_PER_SECOND / ACC_SAMPLE_RATE_HZ;
 
-                    let t = timestamp + (inx * acc_timestep) as u64;
+                    let t = timestamp + (inx as u64 * acc_timestep);
                     let acc = acc.data();
 
                     self.acc_x.add_point(t, acc.0);
@@ -64,10 +70,10 @@ impl Channels {
                     self.acc_z.add_point(t, acc.2);
                 }
                 PmdData::Ecg(ecg) => {
-                    // Magic number
-                    let ecg_timestep = 1000000000 / 130;
+                    // Calculate time delta between samples based on configured sample rate
+                    let ecg_timestep = NANOS_PER_SECOND / ECG_SAMPLE_RATE_HZ;
                     self.ecg
-                        .add_point(timestamp + (inx * ecg_timestep) as u64, *ecg.val());
+                        .add_point(timestamp + (inx as u64 * ecg_timestep), *ecg.val());
                 }
             }
         }
