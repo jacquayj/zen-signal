@@ -284,6 +284,7 @@ jobs:
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           name: Release ${{ steps.get_version.outputs.VERSION }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             ## ZenSignal ${{ steps.get_version.outputs.VERSION }}
             
@@ -345,5 +346,3 @@ jobs:
             checksums.txt
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
