@@ -50,12 +50,13 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        let ecg_series = &self.state.channels.ecg;
-        // Show last 10 seconds of ECG data
-        let window = ChartWindow::TenSeconds.as_nanos();
-        let points = ecg_series.last_duration(window);
+        use crate::timeseries::TimeSeries;
         
-        let (_, max_time) = ecg_series.display_time_range(window);
+        let ecg_series = &self.state.channels.ecg;
+        // Show last 10 seconds of ECG data with 1.5-second delay for smooth scrolling
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let display_time = TimeSeries::current_display_time();
+        let points = ecg_series.range_from_time(display_time, window);
         
         let mut chart = builder
             .margin(15)
@@ -76,7 +77,7 @@ impl<'a> Chart<Message> for EcgChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &RED,
@@ -90,12 +91,14 @@ impl<'a> Chart<Message> for HrChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        let hr_series = &self.state.channels.hr;
-        // Show last 10 seconds of HR data
-        let window = ChartWindow::TenSeconds.as_nanos();
-        let points = hr_series.last_duration(window);
+        use crate::timeseries::TimeSeries;
         
-        let (_, max_time) = hr_series.display_time_range(window);
+        let hr_series = &self.state.channels.hr;
+        // Show last 10 seconds of HR data with 1-second delay for smooth scrolling
+        // Use 100ms interpolation interval for smooth curves
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let display_time = TimeSeries::current_display_time();
+        let points = hr_series.range_from_time_interpolated(display_time, window, 100_000_000);
 
         let mut chart = builder
             .margin(15)
@@ -116,7 +119,7 @@ impl<'a> Chart<Message> for HrChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &RED,
@@ -130,12 +133,14 @@ impl<'a> Chart<Message> for RrChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        let rr_series = &self.state.channels.rr;
-        // Show last 10 seconds of RR data
-        let window = ChartWindow::TenSeconds.as_nanos();
-        let points = rr_series.last_duration(window);
+        use crate::timeseries::TimeSeries;
         
-        let (_, max_time) = rr_series.display_time_range(window);
+        let rr_series = &self.state.channels.rr;
+        // Show last 10 seconds of RR data with 1-second delay for smooth scrolling
+        // Use 100ms interpolation interval for smooth curves
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let display_time = TimeSeries::current_display_time();
+        let points = rr_series.range_from_time_interpolated(display_time, window, 100_000_000);
 
         let mut chart = builder
             .margin(15)
@@ -156,7 +161,7 @@ impl<'a> Chart<Message> for RrChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &BLUE,
@@ -170,12 +175,14 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
-        let hrv_series = &self.state.channels.hrv;
-        // Show last 10 seconds of HRV (RMSSD) data
-        let window = ChartWindow::TenSeconds.as_nanos();
-        let points = hrv_series.last_duration(window);
+        use crate::timeseries::TimeSeries;
         
-        let (_, max_time) = hrv_series.display_time_range(window);
+        let hrv_series = &self.state.channels.hrv;
+        // Show last 10 seconds of HRV (RMSSD) data with 1-second delay for smooth scrolling
+        // Use 100ms interpolation interval for smooth curves
+        let window = ChartWindow::TenSeconds.as_nanos();
+        let display_time = TimeSeries::current_display_time();
+        let points = hrv_series.range_from_time_interpolated(display_time, window, 100_000_000);
 
         let mut chart = builder
             .margin(15)
@@ -196,7 +203,7 @@ impl<'a> Chart<Message> for HrvChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &GREEN,
@@ -210,18 +217,19 @@ impl<'a> Chart<Message> for AccChartType<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
+        use crate::timeseries::TimeSeries;
+        
         let acc_x_series = &self.state.channels.acc_x;
-        // Show last 10 seconds of accelerometer data
+        // Show last 10 seconds of accelerometer data with 1.5-second delay for smooth scrolling
         let window = ChartWindow::TenSeconds.as_nanos();
-        let x_points = acc_x_series.last_duration(window);
+        let display_time = TimeSeries::current_display_time();
+        let x_points = acc_x_series.range_from_time(display_time, window);
 
         let acc_y_series = &self.state.channels.acc_y;
-        let y_points = acc_y_series.last_duration(window);
+        let y_points = acc_y_series.range_from_time(display_time, window);
 
         let acc_z_series = &self.state.channels.acc_z;
-        let z_points = acc_z_series.last_duration(window);
-
-        let (_, max_time) = acc_x_series.display_time_range(window);
+        let z_points = acc_z_series.range_from_time(display_time, window);
 
         let mut chart = builder
             .margin(15)
@@ -242,7 +250,7 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 x_points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &GREEN,
@@ -252,7 +260,7 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 y_points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &MAGENTA,
@@ -262,7 +270,7 @@ impl<'a> Chart<Message> for AccChartType<'a> {
         chart
             .draw_series(LineSeries::new(
                 z_points.iter().map(|p| {
-                    let time_sec = (p.time as f64 - max_time as f64) / TimeUnit::Seconds.nanos_per_unit();
+                    let time_sec = (p.time as f64 - display_time as f64) / TimeUnit::Seconds.nanos_per_unit();
                     (time_sec, p.value)
                 }),
                 &CYAN,

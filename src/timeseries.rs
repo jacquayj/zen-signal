@@ -9,6 +9,10 @@ const ACC_SAMPLE_RATE_HZ: u64 = 200; // Default accelerometer sampling rate in H
 // Nanoseconds in one second
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
+// Display delay for smooth scrolling (1.5 seconds in nanoseconds)
+// This prevents gaps when low-rate data (HR, RR, HRV at ~1Hz) hasn't arrived yet
+const DISPLAY_DELAY_NS: u64 = 1_500_000_000;
+
 /// Time conversion constants
 #[derive(Debug, Clone, Copy)]
 pub enum TimeUnit {
@@ -86,7 +90,6 @@ impl Channels {
 
     pub fn handle_heart_rate(&mut self, hr: arctic::HeartRate) {
         // Use current system time as approximate timestamp for HR
-        // HR data doesn't come with precise timestamps from the device
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -134,33 +137,28 @@ impl Channels {
     }
 
     pub fn handle_measurement_data(&mut self, data: arctic::PmdRead) {
-        let timestamp = data.time_stamp();
+        // Use system time as the reference point for this batch
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        
+        // Use actual arrival time for timestamping
+        let batch_ref_time = now;
+        
         let data_vec = data.data();
-        let sample_count = data_vec.len();
+        let batch_size = data_vec.len() as u64;
 
-        for (inx, d) in data_vec.iter().enumerate() {
+        for (idx, d) in data_vec.iter().enumerate() {
             match d {
                 PmdData::Acc(acc) => {
                     // Calculate time delta between samples based on configured sample rate
                     let acc_timestep = NANOS_PER_SECOND / self.acc_x.sample_rate();
                     
-                    // Calculate timestamp for this sample (working backwards from the last timestamp)
-                    let samples_from_end = (sample_count - 1 - inx) as u64;
-                    let t = timestamp.saturating_sub(samples_from_end * acc_timestep);
-                    
-                    // Validate on first sample: check if calculated first timestamp matches expectations
-                    if inx == 0 && self.acc_x.data.len() > 0 {
-                        if let Some(last) = self.acc_x.data.last() {
-                            let expected_gap = acc_timestep;
-                            let actual_gap = t.saturating_sub(last.time);
-                            let tolerance = acc_timestep / 2;
-                            
-                            if actual_gap > expected_gap + tolerance || actual_gap < expected_gap.saturating_sub(tolerance) {
-                                eprintln!("Warning: ACC timestamp mismatch. Expected gap: {}ns, Actual gap: {}ns", 
-                                    expected_gap, actual_gap);
-                            }
-                        }
-                    }
+                    // Calculate timestamp for this sample within the batch
+                    // Working backwards from batch_ref_time to spread samples across time
+                    let samples_from_end = batch_size - 1 - idx as u64;
+                    let t = batch_ref_time.saturating_sub(samples_from_end * acc_timestep);
 
                     let acc = acc.data();
                     self.acc_x.add_point(t, acc.0);
@@ -171,23 +169,10 @@ impl Channels {
                     // Calculate time delta between samples based on configured sample rate
                     let ecg_timestep = NANOS_PER_SECOND / self.ecg.sample_rate();
                     
-                    // Calculate timestamp for this sample (working backwards from the last timestamp)
-                    let samples_from_end = (sample_count - 1 - inx) as u64;
-                    let t = timestamp.saturating_sub(samples_from_end * ecg_timestep);
-                    
-                    // Validate on first sample: check if calculated first timestamp matches expectations
-                    if inx == 0 && self.ecg.data.len() > 0 {
-                        if let Some(last) = self.ecg.data.last() {
-                            let expected_gap = ecg_timestep;
-                            let actual_gap = t.saturating_sub(last.time);
-                            let tolerance = ecg_timestep / 2;
-                            
-                            if actual_gap > expected_gap + tolerance || actual_gap < expected_gap.saturating_sub(tolerance) {
-                                eprintln!("Warning: ECG timestamp mismatch. Expected gap: {}ns, Actual gap: {}ns", 
-                                    expected_gap, actual_gap);
-                            }
-                        }
-                    }
+                    // Calculate timestamp for this sample within the batch
+                    // Working backwards from batch_ref_time to spread samples across time
+                    let samples_from_end = batch_size - 1 - idx as u64;
+                    let t = batch_ref_time.saturating_sub(samples_from_end * ecg_timestep);
                     
                     self.ecg.add_point(t, *ecg.val());
                 }
@@ -301,23 +286,6 @@ impl TimeSeries {
             self.start_time = Some(time);
         }
 
-        // Fill gaps with zero values
-        if self.has_gap(time) {
-            let missing = self.missing_samples(time);
-            if missing > 0 {
-                eprintln!("Warning: Detected gap in data. Filling {} missing samples with zeros", missing);
-                
-                // Fill the gap with zero-value points
-                let expected_interval = self.expected_interval_ns();
-                let last_time = self.data.last().map(|p| p.time).unwrap_or(time);
-                
-                for i in 1..=missing {
-                    let fill_time = last_time + (i as u64 * expected_interval);
-                    self.data.push(Point { time: fill_time, value: 0 });
-                }
-            }
-        }
-
         self.data.push(Point { time, value });
     }
 
@@ -351,5 +319,211 @@ impl TimeSeries {
         let latest_time = self.data.last().unwrap().time;
         let start_time = latest_time.saturating_sub(duration_ns);
         (start_time, latest_time)
+    }
+
+    /// Get the current display reference time with smooth scrolling delay
+    /// This returns the current system time minus a fixed delay to enable smooth scrolling
+    /// and prevent gaps in low-rate data streams
+    pub fn current_display_time() -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        now.saturating_sub(DISPLAY_DELAY_NS)
+    }
+
+    /// Get points within a specific time range [end_time - duration_ns, end_time]
+    /// This is used for rendering with a fixed reference time for smooth scrolling
+    pub fn range_from_time(&self, end_time: u64, duration_ns: u64) -> &[Point] {
+        if self.data.is_empty() {
+            return &[];
+        }
+
+        let start_time = end_time.saturating_sub(duration_ns);
+        
+        // Find first point >= start_time
+        let start_idx = self.data.partition_point(|p| p.time < start_time);
+        
+        // Find first point > end_time
+        let end_idx = self.data.partition_point(|p| p.time <= end_time);
+        
+        &self.data[start_idx..end_idx]
+    }
+
+    /// Get points for rendering with forward-fill to handle gaps in low-rate data
+    /// If there's a gap at the start of the window, adds a synthetic point with the last known value
+    pub fn range_from_time_with_fill(&self, end_time: u64, duration_ns: u64) -> Vec<Point> {
+        if self.data.is_empty() {
+            return Vec::new();
+        }
+
+        let start_time = end_time.saturating_sub(duration_ns);
+        
+        // Find first point >= start_time
+        let start_idx = self.data.partition_point(|p| p.time < start_time);
+        
+        // Find first point > end_time
+        let end_idx = self.data.partition_point(|p| p.time <= end_time);
+        
+        let points_in_range = &self.data[start_idx..end_idx];
+        
+        // If we have points in range but the first one is after start_time,
+        // look for the last point before the window to forward-fill
+        if !points_in_range.is_empty() && points_in_range[0].time > start_time {
+            // Find the last point before start_time
+            if start_idx > 0 {
+                let last_before = &self.data[start_idx - 1];
+                // Create a synthetic point at the start of the window with the last known value
+                let mut result = Vec::with_capacity(points_in_range.len() + 1);
+                result.push(Point {
+                    time: start_time,
+                    value: last_before.value,
+                });
+                result.extend(points_in_range.iter().map(|p| Point {
+                    time: p.time,
+                    value: p.value,
+                }));
+                return result;
+            }
+        }
+        
+        // No fill needed, just return the points
+        points_in_range.iter().map(|p| Point {
+            time: p.time,
+            value: p.value,
+        }).collect()
+    }
+
+    /// Get points with linear interpolation for smooth curves
+    /// Adds interpolated points between actual data points to create smoother lines
+    /// target_interval_ns: desired time between interpolated points (e.g., 100ms = 100_000_000ns)
+    pub fn range_from_time_interpolated(&self, end_time: u64, duration_ns: u64, target_interval_ns: u64) -> Vec<Point> {
+        if self.data.is_empty() {
+            return Vec::new();
+        }
+
+        let start_time = end_time.saturating_sub(duration_ns);
+        
+        // Find first point >= start_time (or the point just before for interpolation)
+        let start_idx = self.data.partition_point(|p| p.time < start_time);
+        
+        // Find first point > end_time (or include one after for forward interpolation)
+        let end_idx = self.data.partition_point(|p| p.time <= end_time);
+        
+        // Get points including one before the window and one after for interpolation
+        let actual_start_idx = if start_idx > 0 { start_idx - 1 } else { start_idx };
+        let actual_end_idx = (end_idx + 1).min(self.data.len());
+        let points_for_interp = &self.data[actual_start_idx..actual_end_idx];
+        
+        if points_for_interp.len() < 2 {
+            // Not enough points to interpolate, just return what we have
+            return self.range_from_time_with_fill(end_time, duration_ns);
+        }
+        
+        let mut result = Vec::new();
+        
+        // ALWAYS add an exact point at start_time by interpolating
+        let first_in_window = points_for_interp.iter().position(|p| p.time >= start_time).unwrap_or(0);
+        if first_in_window > 0 {
+            let p1 = &points_for_interp[first_in_window - 1];
+            let p2 = &points_for_interp[first_in_window];
+            
+            if p1.time <= start_time && p2.time >= start_time {
+                let time_diff = p2.time - p1.time;
+                let value_diff = p2.value - p1.value;
+                let time_from_p1 = start_time - p1.time;
+                let progress = time_from_p1 as f64 / time_diff as f64;
+                let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
+                
+                result.push(Point {
+                    time: start_time,
+                    value: interpolated_value.round() as i32,
+                });
+            }
+        }
+        
+        // Interpolate between each pair of consecutive points
+        for window in points_for_interp.windows(2) {
+            let p1 = &window[0];
+            let p2 = &window[1];
+            
+            let time_diff = p2.time.saturating_sub(p1.time);
+            let value_diff = p2.value - p1.value;
+            
+            // Calculate number of interpolated points needed
+            let num_steps = (time_diff / target_interval_ns).max(1);
+            
+            // Add interpolated points
+            for step in 0..num_steps {
+                let t = p1.time + (time_diff * step / num_steps);
+                
+                // Only add points within the display window (but not the exact boundaries - we handle those separately)
+                if t > start_time && t < end_time {
+                    let progress = step as f64 / num_steps as f64;
+                    let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
+                    
+                    result.push(Point {
+                        time: t,
+                        value: interpolated_value.round() as i32,
+                    });
+                }
+            }
+        }
+        
+        // Add actual points that fall within the window (excluding boundaries)
+        for point in points_for_interp {
+            if point.time > start_time && point.time < end_time {
+                result.push(Point {
+                    time: point.time,
+                    value: point.value,
+                });
+            }
+        }
+        
+        // ALWAYS add an exact point at end_time by forward-interpolating
+        let last_before_end = points_for_interp.iter().rposition(|p| p.time <= end_time).unwrap_or(points_for_interp.len() - 1);
+        if last_before_end + 1 < points_for_interp.len() {
+            let p1 = &points_for_interp[last_before_end];
+            let p2 = &points_for_interp[last_before_end + 1];
+            
+            if p1.time <= end_time && p2.time >= end_time {
+                let time_diff = p2.time - p1.time;
+                let value_diff = p2.value - p1.value;
+                let time_from_p1 = end_time - p1.time;
+                let progress = time_from_p1 as f64 / time_diff as f64;
+                let interpolated_value = p1.value as f64 + (value_diff as f64 * progress);
+                
+                result.push(Point {
+                    time: end_time,
+                    value: interpolated_value.round() as i32,
+                });
+            }
+        } else if points_for_interp.len() >= 2 {
+            // Forward extrapolate from last two points
+            let p1 = &points_for_interp[points_for_interp.len() - 2];
+            let p2 = &points_for_interp[points_for_interp.len() - 1];
+            
+            if p2.time < end_time {
+                let time_diff = p2.time - p1.time;
+                let value_diff = p2.value - p1.value;
+                let time_from_p2 = end_time - p2.time;
+                
+                // Only extrapolate if gap is reasonable
+                if time_diff > 0 && time_from_p2 <= time_diff * 3 {
+                    let progress = time_from_p2 as f64 / time_diff as f64;
+                    let interpolated_value = p2.value as f64 + (value_diff as f64 * progress);
+                    
+                    result.push(Point {
+                        time: end_time,
+                        value: interpolated_value.round() as i32,
+                    });
+                }
+            }
+        }
+        
+        // Sort by time since we added points out of order
+        result.sort_by_key(|p| p.time);
+        
+        result
     }
 }
