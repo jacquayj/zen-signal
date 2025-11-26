@@ -57,9 +57,9 @@ impl ConnectionManager {
     /// This should be called in a spawned thread. It will block until the command
     /// channel is closed.
     ///
-    /// ## Why separate thread
-    /// The connection process involves blocking async operations. Running in a
-    /// separate thread with its own Tokio runtime prevents blocking the UI.
+    /// A separate thread is used because the connection process involves blocking
+    /// async operations. Running in a separate thread with its own Tokio runtime
+    /// prevents blocking the UI.
     pub fn run(self) {
         let rt = match Runtime::new() {
             Ok(runtime) => runtime,

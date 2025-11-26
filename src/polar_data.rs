@@ -124,7 +124,6 @@ impl Channels {
 
     /// Calculate the starting timestamp for a data stream based on last known point
     ///
-    /// ## Why
     /// Sensor data arrives in batches without individual timestamps. We need to
     /// calculate evenly-spaced timestamps based on the known sample rate.
     /// Continues from last point if available to maintain continuity.
@@ -148,7 +147,6 @@ impl Channels {
 
     /// Count samples by type in measurement data
     ///
-    /// ## Why
     /// We need counts to calculate proper timestamp spacing before processing.
     /// Single pass is more efficient than counting during processing.
     fn count_samples(data: &[PmdData]) -> (u64, u64) {

@@ -55,7 +55,6 @@ impl ChartWindow {
 
 /// Get the current display reference time with optional smooth scrolling delay
 ///
-/// ## Why
 /// When smooth_streaming is true, returns current time minus a fixed delay to enable
 /// smooth scrolling and prevent gaps in low-rate data streams.
 /// When smooth_streaming is false, returns current time for immediate rendering.
@@ -79,7 +78,6 @@ pub fn current_display_time(smooth_streaming: bool) -> u64 {
 
 /// Linear interpolation between two points at a specific time
 ///
-/// ## Why
 /// Creates smooth transitions by calculating intermediate values.
 /// Used for both boundary interpolation and filling gaps.
 pub fn interpolate_point(p1: &Point, p2: &Point, target_time: u64) -> Point {
@@ -97,7 +95,6 @@ pub fn interpolate_point(p1: &Point, p2: &Point, target_time: u64) -> Point {
 
 /// Interpolate points between two consecutive data points
 ///
-/// ## Why
 /// Low sample rate data (like HR at 1Hz) appears steppy without interpolation.
 /// This creates smooth curves by adding intermediate points.
 pub fn interpolate_between_points(
@@ -135,7 +132,6 @@ pub fn interpolate_between_points(
 
 /// Add interpolated point at the start boundary of the time window
 ///
-/// ## Why
 /// Ensures charts always show data from the exact left edge, preventing
 /// visible gaps when the first real data point is after start_time.
 pub fn add_start_boundary_point(result: &mut Vec<Point>, points: &[Point], start_time: u64) {
@@ -152,7 +148,6 @@ pub fn add_start_boundary_point(result: &mut Vec<Point>, points: &[Point], start
 
 /// Add interpolated or extrapolated point at the end boundary of the time window
 ///
-/// ## Why
 /// Provides smooth scrolling by ensuring charts show data up to the exact
 /// right edge. Uses extrapolation cautiously to avoid wild predictions.
 pub fn add_end_boundary_point(result: &mut Vec<Point>, points: &[Point], end_time: u64) {
@@ -204,10 +199,10 @@ pub fn add_end_boundary_point(result: &mut Vec<Point>, points: &[Point], end_tim
 /// - `target_interval_ns`: Desired time between interpolated points (e.g., 100ms)
 /// - `interpolate_end`: If true, adds interpolated point at end_time boundary
 ///
-/// ## Why interpolate_end parameter
-/// When smooth streaming is enabled, we delay display time to ensure data has arrived.
-/// In this case, we can safely interpolate at the end boundary. Without delay,
-/// interpolating at the current moment would create artifacts when new data arrives.
+/// The interpolate_end parameter exists because when smooth streaming is enabled,
+/// we delay display time to ensure data has arrived. In this case, we can safely
+/// interpolate at the end boundary. Without delay, interpolating at the current
+/// moment would create artifacts when new data arrives.
 pub fn range_from_time_interpolated(
     ts: &TimeSeries,
     end_time: u64,
