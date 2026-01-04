@@ -6,6 +6,8 @@
 //! ## Settings
 //! - `enable_autoconnect`: Automatically connect to first Polar device found
 //! - `smooth_data_streaming`: Enable display delay for smoother low-rate data
+//! - `recording_max_memory_mb`: Maximum memory buffer size before flushing to disk
+//! - `recording_directory`: Directory where recording files are saved
 //!
 //! ## Storage Location
 //! - macOS: ~/Library/Application Support/zen-signal/config.toml
@@ -25,13 +27,29 @@ use crate::error::ConfigError;
 pub struct Config {
     pub enable_autoconnect: bool,
     pub smooth_data_streaming: bool,
+    pub recording_max_memory_mb: usize,
+    pub recording_directory: PathBuf,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let recording_dir = if cfg!(target_os = "windows") {
+            dirs::document_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("ZenSignal")
+                .join("Recordings")
+        } else {
+            dirs::document_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("ZenSignal")
+                .join("Recordings")
+        };
+
         Self {
             enable_autoconnect: false,
             smooth_data_streaming: true,
+            recording_max_memory_mb: 100,
+            recording_directory: recording_dir,
         }
     }
 }
@@ -98,6 +116,8 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.enable_autoconnect, false);
         assert_eq!(config.smooth_data_streaming, true);
+        assert_eq!(config.recording_max_memory_mb, 100);
+        assert!(config.recording_directory.to_string_lossy().contains("ZenSignal"));
     }
 
     #[test]
@@ -105,11 +125,14 @@ mod tests {
         let config = Config {
             enable_autoconnect: true,
             smooth_data_streaming: false,
+            recording_max_memory_mb: 50,
+            recording_directory: PathBuf::from("/test/path"),
         };
         
         let toml_str = toml::to_string(&config).expect("Failed to serialize");
         assert!(toml_str.contains("enable_autoconnect = true"));
         assert!(toml_str.contains("smooth_data_streaming = false"));
+        assert!(toml_str.contains("recording_max_memory_mb = 50"));
     }
 
     #[test]
@@ -117,11 +140,14 @@ mod tests {
         let toml_str = r#"
             enable_autoconnect = true
             smooth_data_streaming = false
+            recording_max_memory_mb = 50
+            recording_directory = "/test/path"
         "#;
         
         let config: Config = toml::from_str(toml_str).expect("Failed to deserialize");
         assert_eq!(config.enable_autoconnect, true);
         assert_eq!(config.smooth_data_streaming, false);
+        assert_eq!(config.recording_max_memory_mb, 50);
     }
 
     #[test]
@@ -140,5 +166,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.enable_autoconnect, false);
         assert_eq!(config.smooth_data_streaming, true);
+        assert_eq!(config.recording_max_memory_mb, 100);
+        assert!(config.recording_directory.to_string_lossy().contains("ZenSignal"));
     }
 }

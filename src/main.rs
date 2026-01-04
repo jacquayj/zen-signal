@@ -8,6 +8,7 @@ mod connection;
 mod device_scanner;
 mod error;
 mod polar_data;
+mod recorder;
 mod sensor;
 mod timeseries;
 mod ui;
@@ -20,6 +21,11 @@ use sensor::SensorUpdate;
 use std::sync::mpsc;
 
 fn main() -> iced::Result {
+    // On Windows, force wgpu to use Vulkan backend instead of DirectX 12
+    // This prevents "INVALID_SUBRESOURCE_STATE" errors with D3D12 resource state transitions
+    #[cfg(target_os = "windows")]
+    std::env::set_var("WGPU_BACKEND", "vulkan");
+    
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     

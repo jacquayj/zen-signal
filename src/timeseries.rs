@@ -40,6 +40,7 @@ impl TimeUnit {
 }
 
 /// Individual timestamped data point
+#[derive(Debug, Clone, Copy)]
 pub struct Point {
     pub time: u64,   // Timestamp in nanoseconds
     pub value: i32,  // Integer value

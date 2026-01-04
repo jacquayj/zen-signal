@@ -179,7 +179,16 @@ async fn run_event_loop(
 ) {
     tokio::select! {
         result = polar.event_loop() => {
-            log::info!("Event loop ended: {:?}", result);
+            // Log the error but handle gracefully
+            match &result {
+                Err(e) => {
+                    // Windows BLE can sometimes fail with "operation canceled" - treat as disconnection
+                    log::warn!("Event loop error: {:?}", e);
+                }
+                Ok(_) => {
+                    log::info!("Event loop completed normally");
+                }
+            }
             let _ = handler.sender.send(SensorUpdate::ConnectionStatus(ConnectionStatus::Disconnected));
         }
         _ = async {

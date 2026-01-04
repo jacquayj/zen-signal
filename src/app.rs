@@ -33,6 +33,7 @@ use crate::device_scanner::{scan_devices, BluetoothDevice};
 use crate::error::ScanError;
 use crate::sensor::SensorUpdate;
 use crate::polar_data::Channels;
+use crate::recorder::PolarDataManager;
 use crate::ui::styles;
 use iced::widget::{button, checkbox, column, container, row, scrollable, text, vertical_space};
 use iced::{Element, Length, Subscription, Task};
@@ -57,6 +58,7 @@ pub struct ZenSignal {
     connect_sender: std::sync::mpsc::Sender<ConnectionCommand>,
     pub config: Config,
     manual_disconnect: bool, // Track if user manually disconnected
+    recorder: PolarDataManager,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +71,8 @@ pub enum Message {
     DisconnectDevice,
     ToggleAutoconnect(bool),
     ToggleSmoothStreaming(bool),
+    StartRecording,
+    StopRecording,
 }
 
 impl ZenSignal {
@@ -82,6 +86,17 @@ impl ZenSignal {
         });
         let should_autoconnect = config.enable_autoconnect;
         
+        // Initialize data manager - always exists for live buffering
+        let recorder = PolarDataManager::new(
+            30, // 30 second live buffer
+            config.recording_max_memory_mb,
+        )
+        .unwrap_or_else(|e| {
+            log::error!("Failed to create data manager: {}, using fallback", e);
+            // Create fallback with minimal memory
+            PolarDataManager::new(30, 10).expect("Failed to create fallback data manager")
+        });
+        
         (
             ZenSignal {
                 channels: Channels::new(),
@@ -92,6 +107,7 @@ impl ZenSignal {
                 connect_sender,
                 config,
                 manual_disconnect: false,
+                recorder,
             },
             if should_autoconnect {
                 Task::perform(scan_devices(), Message::DevicesScanned)
@@ -129,10 +145,10 @@ impl ZenSignal {
                                     }
                                 }
                                 SensorUpdate::HeartRate(hr) => {
-                                    self.channels.handle_heart_rate(hr);
+                                    self.channels.handle_heart_rate(hr, Some(&self.recorder));
                                 }
                                 SensorUpdate::MeasurementData(data) => {
-                                    self.channels.handle_measurement_data(data);
+                                    self.channels.handle_measurement_data(data, Some(&self.recorder));
                                 }
                                 SensorUpdate::SampleRateConfig { ecg_rate, acc_rate } => {
                                     log::info!("Updating sample rates: ECG={} Hz, ACC={} Hz", ecg_rate, acc_rate);
@@ -223,6 +239,29 @@ impl ZenSignal {
                 self.config.smooth_data_streaming = enabled;
                 if let Err(e) = self.config.save() {
                     log::error!("Failed to save config: {}", e);
+                }
+                Task::none()
+            }
+            Message::StartRecording => {
+                if !self.recorder.is_recording() {
+                    match self.recorder.start_recording(
+                        &self.config.recording_directory,
+                    ) {
+                        Ok(()) => {
+                            log::info!("Recording started");
+                        }
+                        Err(e) => {
+                            log::error!("Failed to start recording: {}", e);
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::StopRecording => {
+                if let Err(e) = self.recorder.stop_recording() {
+                    log::error!("Failed to stop recording: {}", e);
+                } else {
+                    log::info!("Recording stopped");
                 }
                 Task::none()
             }
@@ -339,12 +378,43 @@ impl ZenSignal {
         )
         .on_toggle(Message::ToggleAutoconnect);
 
+        // Recording controls
+        let recording_status = if self.recorder.is_recording() {
+            format!(
+                "Recording: {:.1} MB / {} pts",
+                self.recorder.memory_usage_mb(),
+                self.recorder.total_points()
+            )
+        } else {
+            "Not recording".to_string()
+        };
+
+        let recording_button = if self.recorder.is_recording() {
+            button(text("⏹ Stop Recording"))
+                .on_press(Message::StopRecording)
+                .padding(10)
+                .width(Length::Fill)
+                .style(styles::disconnect_button_style())
+        } else if self.connection_state == ConnectionState::Connected {
+            button(text("⏺ Start Recording"))
+                .on_press(Message::StartRecording)
+                .padding(10)
+                .width(Length::Fill)
+                .style(styles::connect_button_style())
+        } else {
+            button(text("⏺ Start Recording"))
+                .padding(10)
+                .width(Length::Fill)
+        };
+
         let sidebar_content = column![
             title,
             scan_button,
             device_list,
             connect_button,
-            vertical_space(), // Push checkboxes to bottom
+            vertical_space(), // Push settings to bottom
+            text(recording_status).size(12),
+            recording_button,
             smooth_streaming_checkbox,
             autoconnect_checkbox,
         ]

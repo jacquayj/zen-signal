@@ -19,6 +19,7 @@
 
 use arctic::PmdData;
 use crate::timeseries::{TimeSeries, PointSliceExt};
+use crate::recorder::{PolarDataManager, ChannelId};
 
 // Sample rates configured for Polar H10 device
 // Note: These should match the rates configured via polar.ecg_sample_rate() and polar.acc_sample_rate()
@@ -37,6 +38,8 @@ const NANOS_PER_SECOND: u64 = 1_000_000_000;
 /// - HR: Heart rate in BPM
 /// - RR: RR intervals (time between heartbeats)
 /// - HRV: Heart rate variability (RMSSD)
+///
+/// Data is stored in both TimeSeries (for UI) and optionally RecorderManager (for persistence).
 pub struct Channels {
     pub ecg: TimeSeries,
     pub acc_x: TimeSeries,
@@ -74,7 +77,8 @@ impl Channels {
     ///
     /// Handles HR (beats per minute) and RR intervals (time between beats).
     /// Calculates rolling HRV (RMSSD) from recent RR intervals.
-    pub fn handle_heart_rate(&mut self, hr: arctic::HeartRate) {
+    /// Records data to file if recorder is provided.
+    pub fn handle_heart_rate(&mut self, hr: arctic::HeartRate, recorder: Option<&PolarDataManager>) {
         // Use current system time as approximate timestamp for HR
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -82,6 +86,11 @@ impl Channels {
             .as_nanos() as u64;
 
         self.hr.add_point(now, (*hr.bpm()).into());
+        
+        // Record HR to file if recording
+        if let Some(rec) = recorder {
+            let _ = rec.add_point(ChannelId::Hr, now, (*hr.bpm()).into());
+        }
 
         log::debug!("Heart rate: {:?}", hr);
 
@@ -107,6 +116,11 @@ impl Channels {
             for (i, &rr_value) in rr.iter().enumerate() {
                 let t = now - ((rr_len - i - 1) as u64 * time_spacing);
                 self.rr.add_point(t, rr_value as i32);
+                
+                // Record RR to file if recording
+                if let Some(rec) = recorder {
+                    let _ = rec.add_point(ChannelId::Rr, t, rr_value as i32);
+                }
             }
             
             // Calculate and store HRV (RMSSD) from recent RR intervals
@@ -118,6 +132,11 @@ impl Channels {
                 let rmssd = recent_rr.rmssd();
                 // Store RMSSD value as integer (rounded)
                 self.hrv.add_point(now, rmssd as i32);
+                
+                // Record HRV to file if recording
+                if let Some(rec) = recorder {
+                    let _ = rec.add_point(ChannelId::Hrv, now, rmssd as i32);
+                }
             }
         }
     }
@@ -167,7 +186,8 @@ impl Channels {
     ///
     /// Handles mixed ECG and accelerometer samples, calculating proper timestamps
     /// for each channel based on sample rates and maintaining continuity.
-    pub fn handle_measurement_data(&mut self, data: arctic::PmdRead) {
+    /// Records data to file if recorder is provided.
+    pub fn handle_measurement_data(&mut self, data: arctic::PmdRead, recorder: Option<&PolarDataManager>) {
         // Use system time as the reference point for this batch
         // Why: Sensor doesn't provide absolute timestamps, only sample batches
         let now = std::time::SystemTime::now()
@@ -212,11 +232,25 @@ impl Channels {
                     self.acc_x.add_point(t, acc.0);
                     self.acc_y.add_point(t, acc.1);
                     self.acc_z.add_point(t, acc.2);
+                    
+                    // Record ACC to file if recording
+                    if let Some(rec) = recorder {
+                        let _ = rec.add_point(ChannelId::AccX, t, acc.0);
+                        let _ = rec.add_point(ChannelId::AccY, t, acc.1);
+                        let _ = rec.add_point(ChannelId::AccZ, t, acc.2);
+                    }
+                    
                     acc_idx += 1;
                 }
                 PmdData::Ecg(ecg) => {
                     let t = ecg_start_time + (ecg_idx * ecg_timestep);
                     self.ecg.add_point(t, *ecg.val());
+                    
+                    // Record ECG to file if recording
+                    if let Some(rec) = recorder {
+                        let _ = rec.add_point(ChannelId::Ecg, t, *ecg.val());
+                    }
+                    
                     ecg_idx += 1;
                 }
             }
